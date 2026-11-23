@@ -46,27 +46,75 @@ namespace VortaAegisPC
     {
         public static int CompareSemVer(string a, string b)
         {
-            int[] pa = ParseSemVerParts(a);
-            int[] pb = ParseSemVerParts(b);
+            int[] pa;
+            string preA;
+            ParseSemVer(a, out pa, out preA);
+            int[] pb;
+            string preB;
+            ParseSemVer(b, out pb, out preB);
             for (int i = 0; i < 3; i++)
             {
                 if (pa[i] < pb[i]) return -1;
                 if (pa[i] > pb[i]) return 1;
             }
+            bool hasPreA = !string.IsNullOrEmpty(preA);
+            bool hasPreB = !string.IsNullOrEmpty(preB);
+            if (!hasPreA && !hasPreB) return 0;
+            if (!hasPreA && hasPreB) return 1;  // 1.0.0 > 1.0.0-rc1
+            if (hasPreA && !hasPreB) return -1; // 1.0.0-rc1 < 1.0.0
+            return ComparePreRelease(preA, preB);
+        }
+
+        private static int ComparePreRelease(string preA, string preB)
+        {
+            string[] idsA = preA.Split('.');
+            string[] idsB = preB.Split('.');
+            int max = Math.Max(idsA.Length, idsB.Length);
+            for (int i = 0; i < max; i++)
+            {
+                if (i >= idsA.Length) return -1;
+                if (i >= idsB.Length) return 1;
+                int na;
+                int nb;
+                bool isNumA = int.TryParse(idsA[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out na);
+                bool isNumB = int.TryParse(idsB[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out nb);
+                if (isNumA && isNumB)
+                {
+                    if (na < nb) return -1;
+                    if (na > nb) return 1;
+                }
+                else if (isNumA != isNumB)
+                {
+                    return isNumA ? -1 : 1; // Numeric identifiers always have lower precedence than non-numeric
+                }
+                else
+                {
+                    int cmp = string.CompareOrdinal(idsA[i], idsB[i]);
+                    if (cmp < 0) return -1;
+                    if (cmp > 0) return 1;
+                }
+            }
             return 0;
         }
 
-        private static int[] ParseSemVerParts(string v)
+        private static void ParseSemVer(string v, out int[] parts, out string preRelease)
         {
-            int[] parts = new int[] { 0, 0, 0 };
-            if (string.IsNullOrEmpty(v)) return parts;
+            parts = new int[] { 0, 0, 0 };
+            preRelease = "";
+            if (string.IsNullOrEmpty(v)) return;
             string clean = v.Trim();
             if (clean.StartsWith("v", StringComparison.OrdinalIgnoreCase))
             {
                 clean = clean.Substring(1).Trim();
             }
+            int plus = clean.IndexOf('+');
+            if (plus >= 0) clean = clean.Substring(0, plus);
             int dash = clean.IndexOf('-');
-            if (dash >= 0) clean = clean.Substring(0, dash);
+            if (dash >= 0)
+            {
+                preRelease = clean.Substring(dash + 1).Trim();
+                clean = clean.Substring(0, dash);
+            }
             string[] tokens = clean.Split('.');
             for (int i = 0; i < 3 && i < tokens.Length; i++)
             {
@@ -76,7 +124,6 @@ namespace VortaAegisPC
                     parts[i] = val;
                 }
             }
-            return parts;
         }
 
         public static void CheckNowAsync(Action<UpdateCheckResult> callback)
@@ -97,10 +144,18 @@ namespace VortaAegisPC
         {
             try
             {
-                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)768 | SecurityProtocolType.Tls;
+                // Enforce TLS 1.2+ only (disable deprecated TLS 1.0 / 1.1)
+                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)12288;
             }
             catch
             {
+                try
+                {
+                    ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                }
+                catch
+                {
+                }
             }
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = "GET";

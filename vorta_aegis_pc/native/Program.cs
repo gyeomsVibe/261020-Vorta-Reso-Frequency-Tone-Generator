@@ -1049,25 +1049,21 @@ namespace VortaAegisPC
             Assert(cat.SkippedFiles.Count == 0, "Bundled packs validated cleanly with zero skipped files");
             IList<PresetItem> all = cat.Presets;
 
-            // Test user pack hot-loading + corrupted pack graceful skip in temp dir
-            string tmpPackDir = Path.Combine(Path.GetTempPath(), "VortaPackTest_" + Process.GetCurrentProcess().Id);
-            try
+            // Test external pack hot-loading + corrupted/incompatible schema graceful skip completely read-only in memory
+            List<KeyValuePair<string, string>> memPacks = new List<KeyValuePair<string, string>>();
+            string bundledProPath = Path.Combine(baseDir, "packs", "vorta_pc_pro_pack_v1.json");
+            if (File.Exists(bundledProPath))
             {
-                Directory.CreateDirectory(tmpPackDir);
-                File.WriteAllText(Path.Combine(tmpPackDir, "valid_tmp.json"),
-                    "{\"schemaVersion\":1,\"packId\":\"tmp-test-pack\",\"packName\":\"임시 테스트 팩\",\"packVersion\":\"1.0.0\",\"presets\":[{\"id\":9001,\"shortCode\":\"T01\",\"tabIndex\":2,\"title\":\"임시 집중 팩\",\"badge\":\"테스트\",\"desc\":\"테스트\",\"freq1\":220,\"freq2\":230,\"isSweep\":false,\"sweepStart\":0,\"sweepEnd\":0,\"sweepDurationSec\":0,\"isAntiPhase\":false,\"binauralBeat\":10,\"noiseType\":0,\"fmMod\":false,\"fmDepth\":0,\"fmRate\":0,\"amMod\":false,\"amDepth\":0,\"amRate\":0}]}",
-                    Encoding.UTF8);
-                File.WriteAllText(Path.Combine(tmpPackDir, "bad_corrupt.json"), "{ invalid json !!!", Encoding.UTF8);
-                File.WriteAllText(Path.Combine(tmpPackDir, "bad_schema.json"), "{\"schemaVersion\":99,\"packId\":\"bad\",\"packName\":\"Bad\",\"presets\":[]}", Encoding.UTF8);
+                memPacks.Add(new KeyValuePair<string, string>(bundledProPath, File.ReadAllText(bundledProPath, Encoding.UTF8)));
+            }
+            memPacks.Add(new KeyValuePair<string, string>("valid_tmp.json",
+                "{\"schemaVersion\":1,\"packId\":\"tmp-test-pack\",\"packName\":\"임시 테스트 팩\",\"packVersion\":\"1.0.0\",\"presets\":[{\"id\":9001,\"shortCode\":\"T01\",\"tabIndex\":2,\"title\":\"임시 집중 팩\",\"badge\":\"테스트\",\"desc\":\"테스트\",\"freq1\":220,\"freq2\":230,\"isSweep\":false,\"sweepStart\":0,\"sweepEnd\":0,\"sweepDurationSec\":0,\"isAntiPhase\":false,\"binauralBeat\":10,\"noiseType\":0,\"fmMod\":false,\"fmDepth\":0,\"fmRate\":0,\"amMod\":false,\"amDepth\":0,\"amRate\":0}]}"));
+            memPacks.Add(new KeyValuePair<string, string>("bad_corrupt.json", "{ invalid json !!!"));
+            memPacks.Add(new KeyValuePair<string, string>("bad_schema.json", "{\"schemaVersion\":99,\"packId\":\"bad\",\"packName\":\"Bad\",\"presets\":[]}"));
 
-                CatalogLoadResult tmpRes = PresetCatalog.LoadAllWithPacks(baseDir, tmpPackDir);
-                Assert(tmpRes.Presets.Count == 65, "Valid external pack loaded cleanly alongside core+pro");
-                Assert(tmpRes.SkippedFiles.Count == 2, "Corrupted and future-schema packs skipped gracefully without crash");
-            }
-            finally
-            {
-                try { if (Directory.Exists(tmpPackDir)) Directory.Delete(tmpPackDir, true); } catch { }
-            }
+            CatalogLoadResult tmpRes = PresetCatalog.LoadAllWithPackPayloads(baseDir, memPacks);
+            Assert(tmpRes.Presets.Count == 65, "Valid external pack loaded cleanly alongside core+pro without filesystem writes");
+            Assert(tmpRes.SkippedFiles.Count == 2, "Corrupted and future-schema packs skipped gracefully without crash");
 
             // 2. VolumeCurve checks (0..120% with unity 100% + clean boost up to 120%)
             AssertNear(VolumeCurve.MIN_DB, -48.0, 1e-12, "MIN_DB == -48.0");
@@ -1093,7 +1089,10 @@ namespace VortaAegisPC
                 PresetItem preset = all[pi];
                 for (int pr = 0; pr < allProfiles.Length; pr++)
                 {
-                    bool checkTp = (!preset.IsSweep && preset.Freq1 > 0f && preset.Freq1 < 6000f && preset.NoiseType == 0);
+                    bool checkTp = (preset.NoiseType == 0 || preset.NoiseType == 3)
+                        && (!preset.IsSweep || Math.Max(preset.SweepStart, preset.SweepEnd) < 6000f)
+                        && preset.Freq1 < 6000f
+                        && preset.Freq2 < 6000f;
                     double rms = VerifyZeroOvershootAt120(allProfiles[pr], preset, true, checkTp);
                     Assert(!double.IsNaN(rms) && rms > 0.005, "Finite non-zero RMS for preset " + preset.Id + " prof=" + pr);
                 }
@@ -1219,10 +1218,12 @@ namespace VortaAegisPC
             AppStateStore.Sanitize(st);
             AssertNear(st.ConsolePaneWidth, 340.0, 1e-6, "ConsolePaneWidth clamps min 340");
 
-            // 10. UpdateChecker SemVer & WPF dark XAML styles (including GridSplitter!)
+            // 10. UpdateChecker SemVer 2.0 (incl. pre-release precedence) & WPF dark XAML styles
             Assert(UpdateChecker.CompareSemVer("3.2.0", "3.2.0") == 0, "SemVer equal");
             Assert(UpdateChecker.CompareSemVer("3.2.0", "3.3.0") < 0, "SemVer upgrade detected");
             Assert(UpdateChecker.CompareSemVer("3.10.0", "3.2.9") > 0, "SemVer numeric comparison");
+            Assert(UpdateChecker.CompareSemVer("3.2.0-rc1", "3.2.0") < 0, "SemVer pre-release lower than release");
+            Assert(UpdateChecker.CompareSemVer("3.2.0-beta.2", "3.2.0-beta.10") < 0, "SemVer pre-release numeric precedence");
             Assert(ThemePalette.CreateDarkSliderStyle() != null, "DarkSliderStyle parses");
             Assert(ThemePalette.CreateDarkComboStyle() != null, "DarkComboStyle parses");
             Assert(ThemePalette.CreateDarkScrollBarStyle() != null, "DarkScrollBarStyle parses");
@@ -1245,8 +1246,10 @@ namespace VortaAegisPC
             float[] buf = new float[BLK * 2];
             double sumSq = 0.0;
             double maxAbs = 0.0;
-            double p0 = 0.0, p1 = 0.0, p2 = 0.0, p3 = 0.0;
+            double pL0 = 0.0, pL1 = 0.0, pL2 = 0.0, pL3 = 0.0;
+            double pR0 = 0.0, pR1 = 0.0, pR2 = 0.0, pR3 = 0.0;
             double maxTp = 0.0;
+            int totalFrames = 0;
 
             for (int b = 0; b < 110; b++)
             {
@@ -1265,20 +1268,26 @@ namespace VortaAegisPC
 
                     if (checkCubicTruePeak)
                     {
-                        p0 = p1; p1 = p2; p2 = p3; p3 = l;
-                        if (b >= 100)
+                        pL0 = pL1; pL1 = pL2; pL2 = pL3; pL3 = l;
+                        pR0 = pR1; pR1 = pR2; pR2 = pR3; pR3 = r;
+                        totalFrames++;
+                        if (totalFrames >= 4)
                         {
                             for (int sub = 1; sub <= 3; sub++)
                             {
                                 double t = sub * 0.25;
                                 double t2 = t * t;
                                 double t3 = t2 * t;
-                                double interp = 0.5 * ((2.0 * p1)
-                                    + (-p0 + p2) * t
-                                    + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-                                    + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
-                                double aTp = Math.Abs(interp);
-                                if (aTp > maxTp) maxTp = aTp;
+                                double iL = 0.5 * ((2.0 * pL1)
+                                    + (-pL0 + pL2) * t
+                                    + (2.0 * pL0 - 5.0 * pL1 + 4.0 * pL2 - pL3) * t2
+                                    + (-pL0 + 3.0 * pL1 - 3.0 * pL2 + pL3) * t3);
+                                double iR = 0.5 * ((2.0 * pR1)
+                                    + (-pR0 + pR2) * t
+                                    + (2.0 * pR0 - 5.0 * pR1 + 4.0 * pR2 - pR3) * t2
+                                    + (-pR0 + 3.0 * pR1 - 3.0 * pR2 + pR3) * t3);
+                                double tp = Math.Max(Math.Abs(iL), Math.Abs(iR));
+                                if (tp > maxTp) maxTp = tp;
                             }
                         }
                     }
@@ -1286,10 +1295,10 @@ namespace VortaAegisPC
             }
 
             Assert(eng.OvershootCount == 0, "Zero overshoot (no hard clamp) preset=" + preset.Id + " profile=" + profile);
-            Assert(maxAbs <= AegisDspEngine.CLEAN_BOOST_CEILING + 1e-6, "Sample peak <= -0.50 dBTP preset=" + preset.Id);
+            Assert(maxAbs <= AegisDspEngine.CLEAN_BOOST_CEILING + 1e-6, "Sample peak L/R <= -0.50 dBTP preset=" + preset.Id);
             if (checkCubicTruePeak)
             {
-                Assert(maxTp <= AegisDspEngine.CLEAN_BOOST_CEILING + 5e-4, "4x True-peak <= -0.50 dBTP preset=" + preset.Id);
+                Assert(maxTp <= AegisDspEngine.CLEAN_BOOST_CEILING + 5e-4, "Full-duration L+R 4x True-peak <= -0.50 dBTP preset=" + preset.Id);
             }
             return Math.Sqrt(sumSq / (110 * BLK * 2));
         }

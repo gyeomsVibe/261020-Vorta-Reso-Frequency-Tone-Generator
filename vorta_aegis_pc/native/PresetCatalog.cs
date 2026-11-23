@@ -269,6 +269,42 @@ namespace VortaAegisPC
 
         public static CatalogLoadResult LoadAllWithPacks(string baseDir, string userPacksDir)
         {
+            List<KeyValuePair<string, string>> entries = new List<KeyValuePair<string, string>>();
+            List<string> candidateDirs = new List<string>();
+            if (!string.IsNullOrEmpty(baseDir))
+            {
+                candidateDirs.Add(Path.Combine(baseDir, "packs"));
+            }
+            if (!string.IsNullOrEmpty(userPacksDir))
+            {
+                candidateDirs.Add(userPacksDir);
+            }
+            for (int d = 0; d < candidateDirs.Count; d++)
+            {
+                string dir = candidateDirs[d];
+                if (!Directory.Exists(dir)) continue;
+                string[] files = Directory.GetFiles(dir, "*.json");
+                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+                for (int f = 0; f < files.Length; f++)
+                {
+                    try
+                    {
+                        string raw = File.ReadAllText(files[f], Encoding.UTF8);
+                        entries.Add(new KeyValuePair<string, string>(files[f], raw));
+                    }
+                    catch
+                    {
+                        entries.Add(new KeyValuePair<string, string>(files[f], null));
+                    }
+                }
+            }
+            CatalogLoadResult res = LoadAllWithPackPayloads(baseDir, entries);
+            res.UserPacksDir = userPacksDir ?? "";
+            return res;
+        }
+
+        public static CatalogLoadResult LoadAllWithPackPayloads(string baseDir, IList<KeyValuePair<string, string>> namedJsonPayloads)
+        {
             List<PresetItem> all = LoadCoreInternal(baseDir);
             List<PresetPackInfo> packs = new List<PresetPackInfo>();
             List<string> skipped = new List<string>();
@@ -291,25 +327,12 @@ namespace VortaAegisPC
                 usedIds.Add(all[i].Id);
             }
 
-            List<string> candidateDirs = new List<string>();
-            if (!string.IsNullOrEmpty(baseDir))
+            if (namedJsonPayloads != null)
             {
-                candidateDirs.Add(Path.Combine(baseDir, "packs"));
-            }
-            if (!string.IsNullOrEmpty(userPacksDir))
-            {
-                candidateDirs.Add(userPacksDir);
-            }
-
-            for (int d = 0; d < candidateDirs.Count; d++)
-            {
-                string dir = candidateDirs[d];
-                if (!Directory.Exists(dir)) continue;
-                string[] files = Directory.GetFiles(dir, "*.json");
-                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
-                for (int f = 0; f < files.Length; f++)
+                for (int i = 0; i < namedJsonPayloads.Count; i++)
                 {
-                    TryLoadPackFile(files[f], all, packs, skipped, usedIds, usedPackIds);
+                    KeyValuePair<string, string> kv = namedJsonPayloads[i];
+                    TryLoadPackJson(kv.Key, kv.Value, all, packs, skipped, usedIds, usedPackIds);
                 }
             }
 
@@ -317,7 +340,7 @@ namespace VortaAegisPC
             res.Presets = all.AsReadOnly();
             res.Packs = packs.AsReadOnly();
             res.SkippedFiles = skipped.AsReadOnly();
-            res.UserPacksDir = userPacksDir ?? "";
+            res.UserPacksDir = "";
             return res;
         }
 
@@ -362,18 +385,23 @@ namespace VortaAegisPC
             return list;
         }
 
-        private static void TryLoadPackFile(
+        private static void TryLoadPackJson(
             string path,
+            string raw,
             List<PresetItem> all,
             List<PresetPackInfo> packs,
             List<string> skipped,
             HashSet<int> usedIds,
             HashSet<string> usedPackIds)
         {
-            string fn = Path.GetFileName(path);
+            string fn = Path.GetFileName(path ?? "pack.json");
             try
             {
-                string raw = File.ReadAllText(path, Encoding.UTF8);
+                if (raw == null)
+                {
+                    skipped.Add(fn + ": unreadable file");
+                    return;
+                }
                 JavaScriptSerializer serializer = new JavaScriptSerializer();
                 Dictionary<string, object> root = serializer.Deserialize<Dictionary<string, object>>(raw);
                 if (root == null)
