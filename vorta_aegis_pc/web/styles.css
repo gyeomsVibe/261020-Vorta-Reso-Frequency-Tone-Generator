@@ -1,0 +1,527 @@
+:root {
+    --bg: #0E0F11;
+    --surface: #17181C;
+    --surface-high: #202228;
+    --outline: #2A2D35;
+    --amber: #E5A93C;
+    --amber-bg: #262015;
+    --active: #00E676;
+    --active-on-light: #00A854;
+    --stopped: #FF3B5C;
+    --stop-btn: #C82838;
+    --text-primary: #F2F3F5;
+    --text-secondary: #9A9FA8;
+    --text-tertiary: #656B76;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: "Malgun Gothic", "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.tnum {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+.app-shell {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 18px 20px 28px;
+}
+
+.editorial-header {
+    margin-bottom: 14px;
+}
+
+.header-top {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.eyebrow {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--text-tertiary);
+}
+
+.app-title {
+    font-size: 24px;
+    font-weight: 800;
+    line-height: 1.25;
+    color: var(--text-primary);
+    margin: 2px 0;
+}
+
+.hw-subline {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.guard-chip {
+    background: var(--surface-high);
+    color: var(--active);
+    border: 1px solid var(--active);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.guard-chip.off {
+    color: var(--amber);
+    border-color: var(--amber);
+    background: var(--amber-bg);
+}
+
+.workspace-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+@media (min-width: 920px) {
+    .workspace-grid {
+        display: grid;
+        grid-template-columns: 410px 1fr;
+        gap: 20px;
+        align-items: start;
+    }
+
+    .console-column {
+        position: sticky;
+        top: 16px;
+    }
+}
+
+.console-card {
+    background: var(--surface);
+    border: 1px solid var(--outline);
+    border-radius: 16px;
+    padding: 16px;
+}
+
+.console-jump-area {
+    cursor: pointer;
+    outline: none;
+}
+
+.status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.led {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.led-stopped {
+    background: var(--text-tertiary);
+}
+
+.led-running {
+    background: var(--active);
+    box-shadow: 0 0 8px rgba(0, 230, 118, 0.7);
+}
+
+.status-text {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    flex: 1;
+}
+
+.status-text.running {
+    color: var(--active);
+}
+
+.engine-tag {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    background: var(--surface-high);
+    border: 1px solid var(--outline);
+    border-radius: 6px;
+    padding: 3px 8px;
+}
+
+.hero-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0 3px;
+}
+
+.hero-freq {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 30px;
+    font-weight: 800;
+    color: var(--amber);
+    line-height: 1.15;
+}
+
+.hero-freq.idle {
+    color: var(--text-tertiary);
+}
+
+.hero-sub-badge {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--amber);
+    background: var(--amber-bg);
+    border: 1px solid var(--amber);
+    border-radius: 6px;
+    padding: 3px 8px;
+}
+
+.title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+}
+
+.scenario-title {
+    flex: 1;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.35;
+}
+
+.jump-cue {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: var(--surface-high);
+    color: var(--active);
+    border: 1px solid var(--active);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.jump-cue.same-tab {
+    color: var(--text-secondary);
+    border-color: var(--outline);
+}
+
+.mechanism-info {
+    white-space: pre-line;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.48;
+    padding: 6px 0 12px;
+}
+
+.divider {
+    height: 1px;
+    background: var(--outline);
+    margin-bottom: 12px;
+}
+
+.vol-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.vol-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.vol-readout {
+    flex: 1;
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--amber);
+}
+
+.vol-readout.muted {
+    color: var(--stopped);
+}
+
+.sys-vol-tag {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.fader-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.icon-btn, .stepper-btn {
+    height: 38px;
+    border-radius: 8px;
+    background: var(--surface-high);
+    border: 1px solid var(--outline);
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.icon-btn {
+    width: 40px;
+}
+
+.stepper-btn {
+    width: 36px;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.icon-btn:hover, .stepper-btn:hover {
+    border-color: var(--amber);
+}
+
+.volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--surface-high);
+    outline: none;
+    cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    border: 2px solid var(--amber);
+    cursor: pointer;
+}
+
+.detent-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.detent-chip {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    background: var(--surface-high);
+    border: 1px solid var(--outline);
+    border-radius: 8px;
+    padding: 7px 2px;
+    cursor: pointer;
+    text-align: center;
+}
+
+.detent-chip.active {
+    color: var(--amber);
+    background: var(--amber-bg);
+    border-color: var(--amber);
+}
+
+.stop-btn {
+    width: 100%;
+    height: 44px;
+    margin-top: 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.12s ease;
+}
+
+.stop-btn.idle {
+    background: var(--surface-high);
+    color: var(--text-tertiary);
+    border: 1px solid var(--outline);
+    cursor: default;
+}
+
+.stop-btn.running {
+    background: var(--stop-btn);
+    color: var(--text-primary);
+    border: 1px solid var(--stopped);
+}
+
+.stop-btn.running:hover {
+    background: #DB3042;
+}
+
+.footer-notice {
+    margin-top: 12px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-tertiary);
+}
+
+.tab-scroll {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    margin-bottom: 10px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--outline) transparent;
+}
+
+.tab-btn {
+    flex-shrink: 0;
+    height: 36px;
+    padding: 6px 14px;
+    border-radius: 18px;
+    background: var(--surface);
+    border: 1px solid var(--outline);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tab-btn.selected {
+    background: var(--text-primary);
+    border-color: var(--text-primary);
+    color: var(--bg);
+}
+
+.tab-btn.playing-owner:not(.selected) {
+    border-color: var(--active);
+    color: var(--text-primary);
+}
+
+.tab-dot {
+    font-size: 10px;
+    line-height: 1;
+    color: var(--active);
+}
+
+.tab-btn.selected .tab-dot {
+    color: var(--active-on-light);
+}
+
+.preset-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+@media (min-width: 920px) {
+    .preset-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+        gap: 10px;
+    }
+}
+
+.preset-card {
+    background: var(--surface);
+    border: 1px solid var(--outline);
+    border-radius: 14px;
+    padding: 13px 16px;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+.preset-card:hover {
+    border-color: var(--amber);
+    background: #1B1D22;
+}
+
+.preset-card.active {
+    background: var(--surface-high);
+    border: 2px solid var(--active);
+}
+
+.card-eyebrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.card-badge {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.card-playing-flag {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--active);
+}
+
+.card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 4px 0;
+}
+
+.card-spec {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--amber);
+    margin-bottom: 5px;
+}
+
+.card-desc {
+    white-space: pre-line;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}

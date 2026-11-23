@@ -1,0 +1,137 @@
+# 보르타 이지스 (Vorta Aegis Pro) 비판·레드팀 전수감사 및 상용화 비(非)AI 디자인 최적화 설계서
+
+> **대상 시스템**: `com.vorta.aegis` (`vorta_aegis_app`, Target: Galaxy Note 20 Ultra Android 13 / Back-compat: Galaxy S6 Android 7.0)  
+> **감사 기준**: v1.0.0 실코드 정밀 분석 · Note 20 Ultra 실기기 스크린샷(`note20u_aegis_screen.png` 등 5종) · M3/One UI 5.1/HIG/NN/G 공식 규격  
+> **문서 구분**: 유지관리 정본 (Maintained Architecture & Design Spec)
+
+---
+
+## PART 1. `/CRITIC` · `/SELFREFINE` · `/REDTEAM` 전수 감사 보고서
+
+### 1-1. 심각도별 결함 전수 목록 (v1.0.0 실코드·실기기 검증 근거)
+
+| ID | 분류 | 심각도 | 실측 위치 및 근거 | 결함 내용 | v2.0.0 해결책 |
+|---|---|---|---|---|---|
+| **C-01** | DSP 음향 결함 | **P1** | `AegisAudioService.java` L278–281 | `if (p.isAntiPhase) sampleR = -Math.sin(mPhaseL);` 분기가 `mPhaseR`(`freq2`)을 완전히 무시하여, 안티 단파 01/02/04/07/09의 핵심 안정화 버퍼 주파수(`10Hz`, `7.83Hz`, `3Hz`, `528Hz`, `56.2Hz`)가 실제 출력에서 **전혀 소리가 나지 않았음**. 또한 스마트폰 스테레오 스피커에서 좌우 동일 파형을 $180^\circ$ 반전 송출 시 근접장 음향 다이폴 자기상쇄(Acoustic Dipole Self-Cancellation)로 방사 에너지가 급감함. | `isAntiPhase`일 때도 `binauralBeat > 0`이면 양 채널 역위상 차음 유지, `freq2 > 0`이면 `-0.65·sin(φL) + 0.35·sin(φR)` 코히어런트 믹싱, 단독이면 코히어런트 동위상 역전파(`-sin(φL)`) 출력으로 모든 설계 주파수를 무손실 송출. |
+| **C-02** | 동시성·상태 동기화 | **P1** | `AegisAudioService.java` L45, L135, L188, L320–342 | ① `mCurrentPreset`가 `volatile`이 아님. ② `stopPlayback()`(`mFadeOut=true`) 직후 0.5초 이내 새 프리셋을 누르면 `loadAndPlayPreset`가 `mFadeOut`을 해제하지 않아 재생 도중 강제 종료됨. ③ `mFadeOut` 완료 시 `break` 이후 버퍼 뒷부분(과거 프레임 잔여 데이터)까지 `AudioTrack.write`로 송출해 틱/글리치 발생. ④ 알림창 "발진 중지"나 형제 앱 양보로 서비스가 종료돼도 `MainActivity`에 브로드캐스트를 보내지 않아 UI LED가 거짓 `🟢 발진 중`으로 남음. | `volatile PresetModel`, `loadAndPlayPreset` 시 `mFadeOut = false` 복원, 중지 시 실제 렌더링된 샘플 길이만 쓰거나 0 패딩 후 안전 종료, `ACTION_STATE_CHANGED` 로컬 브로드캐스트로 UI 즉시 동기화. |
+| **C-03** | 독립 볼륨 엔진 부재 | **P1** | `AegisAudioService.java` L56, L202, L330 | `mMasterGain = 0.8`이 UI 어디에도 연결되지 않음. 단순 선형 곱셈이라 청감상 음량 조절이 부자연스럽고, 스무딩 필터가 없어 드래그 시 지퍼 노이즈(Zipper Noise) 위험이 있으며, 앱 재시작 시 볼륨이 초기화됨. | `-40dB ~ 0dB` 로그 감쇄 곡선(`VolumeCurve`), 샘플당 1차 IIR 지수 평활화(`alpha=0.0014`, ~15ms), 뮤트, `SharedPreferences` 영구 저장, NN/G 하이브리드 슬라이더+스테퍼+디텐트 UI 탑재. |
+| **C-04** | DSP 파형 아티팩트 & 메모리 | **P2** | `AegisAudioService.java` L235, L301–304, `PresetModel.java` L54 | ① 스윕이 `0→1` 톱니형으로 감기면서 주기 끝에 주파수가 급락(`4.5→1.0Hz` 등)해 청각 충격 유발. ② `totalFramesRendered`가 프리셋 전환 시 초기화되지 않아 스윕이 중간 주파수부터 시작함. ③ 잠자리 날갯짓(`noiseType==3`)이 `1.0 / 0.2` 사각파 계단 전환이라 고조파 클릭 노이즈 유발. ④ `getAllPresets()`가 매 호출마다 48개 객체를 새로 할당함. | 삼각 핑퐁 스윕(`0→1→0`)으로 연속 왕복, 프리셋 전환 시 `mPresetFrameCounter = 0` 초기화, Raised-Cosine(`0.6 + 0.4·sin`) 연속 잠자리 변조, `PresetModel` 싱글톤 캐싱. |
+| **C-05** | Android 13 / One UI 안정성 | **P2** | `AegisAudioService.java`, `AndroidManifest.xml`, `MainActivity.java` | `WAKE_LOCK` 권한만 선언하고 `PARTIAL_WAKE_LOCK` 미획득(딥슬립 시 스레드 스로틀링). `AudioFocusRequest` 및 이어폰 분리 감지(`ACTION_AUDIO_BECOMING_NOISY`) 미구현. `startForeground`에 `FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK` 상수 미전달. 헤더에 `SM-N986N` 문자열 하드코딩. | `PARTIAL_WAKE_LOCK` 획득/해제 관리, `AudioFocusRequest`(덕킹 `0.3x`·손실 시 정지), `ACTION_AUDIO_BECOMING_NOISY` 즉시 정지 안전장치, API 29+ 포그라운드 타입 명시, `Build.MODEL` 동적 표시. |
+| **C-06** | AI Slop UI/UX 결함 | **P2** | `MainActivity.java`, `note20u_aegis_screen.png` | ① 6종 고채도 네온 색상 남발. ② 12종 이상 이모지 난립. ③ 카드 제목이 우측 배지(`★보르타 A30/FreqGen 대응`)와 한 줄에 놓여 4줄로 심하게 찌그러짐. ④ 연타 시 Toast 알림 겹침. ⑤ 현재 어떤 카드가 발진 중인지 카드 리스트에 하이라이트가 없고, 스윕 실시간 주파수가 대시보드에 표시되지 않음. | Obsidian + Amber 2-레이어 톤 시스템, 이모지 0개, 배지 상단 분리로 제목 전체폭 확보, 토스트 스팸 제거 및 햅틱+인라인 활성 카드 테두리 하이라이트, 250ms 라이브 Hz 계측기 도입. |
+| **RT-01** | 보안 경계 (CWE-926) | **P1** | `AndroidManifest.xml` L39 | `AegisAudioService`에 `android:exported="true"`가 설정되어 악성 외부 앱이 임의의 `ACTION_START`/`ACTION_STOP` 인텐트로 스피커를 무단 제어 가능함. | `android:exported="false"`로 즉시 잠금 (형제 앱 양보는 앱 내부 리시버가 아니라 `ACTION_EXCLUSIVE_AUDIO_START` 브로드캐스트로 처리되므로 기능 영향 0). |
+| **RT-02** | 음향 물리 정직성 | **정보/UX** | 물리 음향 한계 | 스마트폰 마이크로 스피커는 물리 크기 한계로 150~200Hz 미만 방사가 급감하며, 외부 마이크로 벽면 위상을 실측하지 않는 개방 공간 180° 반전파는 외장 앰프·스피커 결선이나 음향 마스킹·바이오피드백 보조 용도로 운용해야 함. | 앱 하단 안내 및 설계서에 `<60Hz: 외장 우퍼/앰프 결선`, `바이노럴 비트: 이어폰/헤드폰`, `174~852Hz·마스킹: 폰 스피커 직접 재생` 출력 경로 가이드를 명확히 분리 표기. |
+| **RT-03** | 상용 스토어 정책 & 청력 보호 | **컴플라이언스** | `PresetModel.java` 의료 효능 표현 | Google Play 출시 시 "우울증을 없애주는", "자연 마취", "DNA 복구" 등 직접적 의료 효능 단정은 의료기기/허위 과장 정책 심사 거절 위험이 있음. 또한 고출력·초음파 재생 시 이어폰 분리 안전장치가 필수임. | 상용 스토어 배포용 카피 가이드라인(이완·집중·휴식 보조 표현) 수립 및 `ACTION_AUDIO_BECOMING_NOISY`·기본 `75% (-10.0 dB)` 안전 헤드룸 강제 적용. |
+| **RT-04** | 기기 배포 드리프트 | **운영** | `adb shell dumpsys package com.vorta.aegis` | Note 20 Ultra 실기기에 `versionCode=1 minSdk=26` 구버전(11/15)이 남아 있어 U321의 `minSdk=21`·`1920` 프레임 버퍼·상호 양보 패치가 반영되지 않았음. | U321 호환성(`minSdk=21`, `d8 --min-api 21`, `1920` 프레임)을 모두 계승한 `v2.0.0 (versionCode=2)` 단일 정본으로 즉시 업그레이드. |
+
+---
+
+## PART 2. 상용화 "비(非)AI 티" 앱 디자인 시스템 최적화 설계서
+
+### 2-1. 디자인 철학: "Precision Acoustic Instrument" (정밀 음향 계측기)
+> Teenage Engineering(OP-1), Braun(Dieter Rams), Endel, Dark Noise, Samsung One UI 5.1의 공통 분모를 추출하여, 장식적 네온 그라데이션을 제거하고 **"신뢰할 수 있는 물리적 음향 기기"**의 감각을 구현한다.
+
+1. **탈(脫) AI Slop 5대 원칙**:
+   - **원칙 1 (단일 포인트 + 톤 계층)**: 배경은 `#0E0F11`(Obsidian Charcoal), 카드는 `#17181C`(Surface Container), 활성 요소는 `#202228`(Surface High)으로 M3 Tonal Elevation을 형성한다. 포인트 컬러는 산업용 앰버(`#E5A93C`) 단일 색으로 절제하고, 신호등 상태색(`#00E676` 가동 / `#FF3B5C` 정지)은 LED와 정지 버튼에만 엄격히 제한한다.
+   - **원칙 2 (이모지 전면 퇴출)**: UI 텍스트 어디에도 컬러 이모지를 쓰지 않는다. 모든 아이콘은 동일 선폭(`1.75dp`, 24dp 뷰포트)의 벡터 드로어블(`ic_aegis_shield`, `ic_volume_on`, `ic_volume_mute`, `ic_stop_square`)로 통일한다.
+   - **원칙 3 (고정폭 숫자 `tnum` 계기판)**: 스윕 주파수(`18.98 Hz`)와 볼륨(`75% · -10.0 dB`)은 `Typeface.MONOSPACE` + `fontFeatureSettings="tnum"`을 적용해 수치 변화 시 글자 흔들림(Jitter)을 0으로 만든다.
+   - **원칙 4 (One UI 5.1 엄지 인체공학)**: 좌우 여백 `20dp`, 볼륨·중지·카테고리 필 등 주요 터치 타깃 최소 높이 `44~48dp`, 탭 선택 시 고대비 흑백 반전(`#F2F3F5` 배경 / `#0E0F11` 텍스트) 적용.
+   - **원칙 5 (텍스트 숨통 확보)**: 카드 배지는 제목 우측에서 떼어내 카드 최상단 Eyebrow 행으로 분리하고, 제목이 화면 전체 너비를 쓰도록 하여 1~2줄 내 완벽히 읽히게 한다.
+
+### 2-2. 컬러 토큰 레지스트리 (`colors.xml`)
+| 토큰명 | Hex | 역할 (M3 / One UI) | 대비 및 용도 |
+|---|---|---|---|
+| `bg_amoled` | `#0E0F11` | `surface` | 전체 화면 기본 바탕 (OLED 스미어링 방지) |
+| `surface_container` | `#17181C` | `surface-container` | 대시보드 및 기본 프리셋 카드 배경 |
+| `surface_high` | `#202228` | `surface-container-high` | 활성 프리셋 카드, 스테퍼/디텐트 비활성 필 |
+| `outline_subtle` | `#2A2D35` | `outline-variant` | 1dp 미세 경계선 및 구분선 |
+| `accent_amber` | `#E5A93C` | `primary` | 실시간 주파수(Hz), 볼륨(dB), 시커바 진행 트랙 |
+| `accent_amber_bg` | `#262015` | `primary-container` | 활성 볼륨 디텐트 칩 배경 |
+| `status_active` | `#00E676` | `semantic-running` | LED 점등, `[발진 중]` 상태 라벨, 활성 카드 1.5dp 테두리 |
+| `status_stopped` | `#FF3B5C` | `semantic-stopped` | 정지/뮤트 상태, 발진 중지 버튼 |
+| `text_primary` | `#F2F3F5` | `on-surface` | 제목, 주요 라벨 (대비비 > 15:1) |
+| `text_secondary` | `#9A9FA8` | `on-surface-variant` | 설명, 보조 메타데이터 (대비비 > 6.5:1) |
+| `text_tertiary` | `#656B76` | `outline` | Eyebrow, 푸터 안내, 비활성 계측 수치 |
+
+### 2-3. 별도 독립 볼륨 조절부 UX 아키텍처
+- **핵심 원칙**: Android 시스템 미디어 볼륨(`STREAM_MUSIC`)을 절대 건드리지 않으면서(영구불변원칙 1조), 오디오 엔진(`AegisAudioService`) 내부 출력 게인을 독립 제어한다.
+- **신호 처리 경로**:
+  $$\text{Slider } p \in [0, 100] \xrightarrow{\text{Log Curve}} \text{dB} = -40 \cdot \left(1 - \frac{p}{100}\right) \longrightarrow G_{\text{target}} = 10^{\text{dB}/20}$$
+  $$G[n] = G[n-1] + 0.0014 \cdot \left(G_{\text{target}} \cdot M_{\text{mute}} \cdot M_{\text{duck}} - G[n-1]\right)$$
+- **NN/G 4중 제어 인터페이스**:
+  1. **상단 수치 계측**: `75% · -10.0 dB` (고정폭 `tnum`) + 우측 시스템 볼륨 읽기 전용 표시 `시스템 12/15`.
+  2. **커스텀 트랙/썸 SeekBar**: 손가락 오클루전을 피하기 위해 트랙 위에 실시간 수치를 고정 배치, 25%/50%/75%/100% 통과 시 미세 햅틱 틱.
+  3. **정밀 스테퍼 & 원터치 뮤트**: 좌측 뮤트 버튼 + `−` / `+` (`5%` 단위 미세 조정).
+  4. **빠른 디텐트 칩 4종**: `25% 야간` · `50% 배경` · `75% 권장` · `100% 최대` (원탭 스냅).
+
+### 2-4. 상용화 로드맵 (v2.0.0 즉시 적용 vs v3.0.0 스토어 확장)
+- **v2.0.0 (금일 즉시 구현·실기기 배포)**:
+  - `C-01~C-06`, `RT-01`, `RT-04` 전수 해결, 독립 볼륨 DSP + UI, 비AI Obsidian/Amber 디자인 시스템, Android 7.0~13(`minSdk 21 ~ targetSdk 33`) 통합 호환.
+- **v3.0.0 (Google Play 정식 스토어 출시용 차기 마일스톤)**:
+  - Jetpack Compose + Material 3 `DynamicTheme` 옵션, Room DB 즐겨찾기/최근 사용, 자동 수면 타이머(15/30/60분 페이드아웃), 실시간 FFT/오실로스코프 파형 캔버스, 스토어 심사 대응 비의료 웰니스 문구 정제 및 첫 실행 면책 온보딩.
+
+---
+
+## PART 3. 최종 마감 `/CRITIC · /SELFREFINE · /REDTEAM` 검증 결과 (v2.1.0 → v2.2.0)
+
+| ID | 분류 | 실측 근거 및 문제 | v2.2.0 해결책 |
+|---|---|---|---|
+| **U-01** | 삼성 뮤직 동시재생 (U324) | v2.0.0 `requestAudioFocus(AUDIOFOCUS_GAIN)` 호출로 삼성 뮤직이 `AUDIOFOCUS_LOSS`를 받고 정지됨 | `requestAudioFocus`/`AudioFocusRequest` 전면 제거 → `AudioTrack piid` 무포커스 동시 믹싱 실측 검증(`requestAudioFocus` `0`건) |
+| **U-02** | 음악 병행 볼륨 & UX 라이팅 (U324) | `100% · -0.0 dB` 부호 버그 및 추상 타이틀("활력") | `-48 dB` 곡선·`0.0 dB` 교정, `20% 배경`/`45% 병행` 디텐트, 상황 기반 48종(`웨이트 트레이닝 · 고중량 몰입` 등) |
+| **U-03** | 용어 통일 (U325) | UI/알림 9곳에 남아 있던 전문 용어 `"발진 중"` | UI·알림 전수 `"재생 중"` / `"재생 중지"` / `"프리셋을 선택하면 즉시 재생됩니다"`로 통일 |
+| **F-01** | `0%` 음소거 해제 무음 (U325) | `0%` 상태에서 뮤트 버튼 재탭 시 `0%`로 해제되어 소리 안 남 | `0%`에서 음소거 해제 시 기본값 `45% (-26.4 dB)` 자동 복귀 |
+| **F-02** | 프리셋 즉시 전환 미세 클릭 (U325) | `p.isAntiPhase` 반전이나 `freq1` 변경 첫 샘플에 미세 진폭 단차 가능 | 1샘플 48kHz 지수 감쇠 디클릭커(`declickL/R *= 0.993`) 탑재 |
+| **F-03** | FM 변조 시 Hz 숫자 떨림 (U325) | v2.1.0 실화면(`19.72 Hz`)처럼 FM 변조 순시값이 기본 캐리어(`18.98 Hz`)를 가림 | `mCurrentLiveFreqHz`를 FM 오프셋 이전 캐리어 기준으로 추출하고 우측 배지에 `+ 10.0 Hz`/`FM`/`AM` 분리 표기 |
+| **F-04** | 이어폰 초음파 청력 보호 (U325) | `16~21.5 kHz` 초음파 프리셋을 이어폰 착용 상태에서 `100%` 실행 시 청력 부담 | 출력 장치 감지(`isPersonalAudioConnected()`) 시 초음파(`noiseType==2`) 출력 `-12 dB (0.25x)` 자동 감쇄 + 콘솔 안내 |
+| **F-05** | WakeLock · AudioTrack 복구 (U325) | 무기한 `WakeLock` 및 `AudioTrack.write` 음수 에러 미처리 | 8시간 상한 `acquire(8h)` + `writeResult < 0` 안전 종료 가드 |
+
+---
+
+## PART 4. 실사용 평가 기반 재생-탭 동기화 UX 비판 분석 및 v2.3.0 개선 (U326)
+
+### 4-1. Stage 0 레퍼런스 및 결함 진단 (`D-01`~`D-03`)
+- **레퍼런스**: Android Bound Service(`developer.android.com` `bindService`/`onServiceConnected` + `HorizontalScrollView` 레이아웃 완료 후 `View.post`/`OnGlobalLayoutListener` 중앙 정렬), Spotify / Apple Music / Material 3 오디오 UX(재진입 시 활성 컨텍스트·카테고리 즉시 복원, 콜드 스타트 무음 대기 상태 유지, 포그라운드 수동 탐색 무간섭, 원탭 재생 위치 이동).
+
+| ID | 결함 원인(실사용 괴리) | v2.3.0 개선 설계 |
+|---|---|---|
+| **D-01** | `MainActivity.onCreate` L156의 무조건 `selectTab(0)` 고정 호출과 `onServiceConnected`/`onResume`/`onNewIntent`의 탭 동기화 부재로, 어떤 탭 주파수를 재생해도 앱 재오픈 시 항상 `안티방어 12`가 선택됨 | `AegisAudioService.loadAndPlayPreset`에서 `PREF_LAST_TAB` 즉시 영속화 + `TabSyncPolicy.resolveTabOnEntry`로 재오픈·백그라운드 복귀·알림 탭 시 재생 탭 우선 자동 동기화(유휴 시 마지막 사용 탭 복원) |
+| **D-02** | `HorizontalScrollView tabScrollView`와 `ScrollView`가 로컬 변수로만 생성되어 `4~7`번 탭(`두통·통증`, `운동·피로`, `기분·힐링`, `모기·벌레`)이 선택되어도 화면 오른쪽 바깥에 가려짐 | `mTabScrollView`/`mMainScrollView` 필드 보관 + `OnGlobalLayoutListener`/`View.post` + `TabSyncPolicy.computeCenteredScrollX`로 선택 탭 pill 뷰포트 중앙 자동 정렬 |
+| **D-03** | 다른 탭 탐색 중 어느 탭에서 소리가 나고 있는지 탭 바에서 구분 불가하며, 콘솔에서 해당 프리셋 카드로 바로 돌아가는 동선 부재 | 재생 소유 탭 pill에 에메랄드 LED 점(`●`)·테두리 부여(`refreshTabStyles`), 콘솔 우측에 `재생 탭 ›`/`위치 보기 ›` 점프 배지(`jumpToPlayingPreset`) + 해당 프리셋 카드 자동 스크롤 |
+
+### 4-2. 레드팀 가드 매트릭스 (`RT-TAB-01`~`RT-TAB-07`)
+- **RT-TAB-01 (포그라운드 탐색 납치 금지)**: `mStateReceiver` 및 250ms `mTelemetryTick`은 `allowTabAutoSync=false`로 동작해 사용자가 다른 탭을 탐색 중일 때 탭을 강제로 되돌리지 않음.
+- **RT-TAB-02 (백그라운드 복귀 재정렬)**: `onStop()`에서 `mPendingEntryTabSync = true`, `onNewIntent()`에서도 재동기화 플래그를 세워 다른 탭을 보다가 홈/타 앱에 다녀와도 현재 재생 중인 탭으로 재정렬.
+- **RT-TAB-03 (0프레임 Tab-0 깜빡임 제거)**: `onCreate()`에서 `PREF_LAST_TAB`을 선로드하여 바인딩 완료 전 첫 프레임부터 올바른 탭 렌더링.
+- **RT-TAB-04 (미계측 스크롤 실패 방지)**: `mTabScrollView.getWidth() == 0` 또는 신규 카드 `getHeight() == 0` 상태에서는 `OnGlobalLayoutListener`가 1회 측정 완료 직후 스크롤 실행.
+- **RT-TAB-05 (콜드 스타트 무음 원칙)**: 유휴 상태로 재실행 시 마지막 사용 탭 UI만 복원하고 `AudioTrack` 자동 재생은 수행하지 않음.
+- **RT-TAB-06 (대비 유지)**: 선택된 밝은 `#F2F3F5` 탭 pill 위 재생 점은 진한 에메랄드(`#00A854`), 비선택 어두운 탭 pill 위에서는 `#00E676` 사용.
+- **RT-TAB-07 (360dp 타이틀 겹침 방지)**: `mTvScenarioTitle`에 `weight=1`을 부여하고 우측 `mTvJumpCue` 배지와 수평 분리하여 좁은 화면에서도 잘림 방지.
+
+---
+
+## PART 5. Windows PC 네이티브 백그라운드 컴패니언 (`v3.0 PC`, Card U333) 설계 및 실증 결과
+
+> 기존 `v2.3 PC` Edge `--app` + `pythonw` 래퍼(9개 프로세스, `~525.9 MB`)를 전면 대체하는 네이티브 Windows x64 컴패니언(`VortaAegisPC.exe`, `100,864 B`) 전환 설계서.
+
+### 1) 비간섭·백그라운드 상주 아키텍처
+- **컴패니언 보조 앱 원칙**: 메인 작업(영상, 브라우저, IDE, AI 도구)을 방해하지 않도록 토스트/풍선 알림(`ShowBalloonTip`) 0건, SMTC/미디어 키/전역 단축키 가로채기 0건, 닫기(`×`) 시 완전 종료 대신 트레이 백그라운드 유지(`HideToTray`, `TrimWorkingSet()`).
+- **단일 인스턴스 & 트레이 제어**: Win32 `Mutex` + `NamedPipe`로 중복 실행 시 기존 창 복원; 트레이 좌클릭 창 토글, 우클릭 다크 컨텍스트 메뉴(재생/정지, 프리셋 재개, 미니 바 전환, 볼륨 프리셋, 완전 종료).
+- **미니 바(`372×62`)**: 작업창 모서리에 겹치지 않고 즉시 음소거·정지·복귀만 제공하는 컴팩트 플로팅 바 제공.
+
+### 2) Windows WASAPI 네이티브 출력 & PC 음향 보정 (3-프로파일)
+- **네이티브 WASAPI 공유 모드**: `WasapiAudioEngine.cs`가 `IMMDeviceEnumerator` / `IAudioClient` / `IAudioRenderClient` COM vtable을 직접 호출해 이벤트 기반 32-bit IEEE Float 48kHz 스테레오로 믹싱, Windows 볼륨 믹서에 독립 `"보르타 이지스"` 세션으로 표시되며 출력 장치 선택·핫플러그 자동 추종 및 유휴 시 스레드 자동 해제.
+- **3-모드 PC 음향 프로파일 (`AegisDspEngine.cs`)**:
+  - `PC 스피커 보정`: 노트북·데스크톱 소형 스피커의 저역 한계를 보완하는 배음(Missing-Fundamental Harmonics) 합성 + `144 Hz` 초저주파 반송.
+  - `이어폰·헤드폰`: 고주파 피로 방지 강제 `-12 dB` 초음파 가드 및 바이노럴 위상 정합.
+  - `순수 원음·DAC`: 추가 하모닉스·가공 없이 `-1.0 dBTP` 기준 원음 정현파 직결 출력.
+
+### 3) 실측 검증 수치 (Windows 11)
+- 네이티브 단위·통합 검증(`test_u333_pc_native.py` / `--self-test`): `768194/0 PASS` (`devices=3`, 48kHz 32-bit IEEE Float, 48종 프리셋 100% 패리티, 3-프로파일·초음파 가드·디클리커·페이드 검증).
+- 실창·트레이 메모리 실측(`verify_u333_live.py`, PID `23772`): 실창 표시 `103.1 MB` → 트레이 상주 전환 `8.5 MB`(`visible=False`, CPU 누적 `3.469s`) → 트레이 복귀 `19.3 MB`(`visible=True`, 캡처 `pc_aegis_v30_panel.png` `53,969 B` 시각 결함 0건).
+
+### 4) `v3.1 PC` 자유 리사이즈·실시간 파동 스코프·`120%` 클린 증폭 고도화 (Card U334)
+- **시장 조사 및 아키텍처 근거**: 데스크톱 오디오 플러그인(FabFilter·Vital·FxSound) 및 `vorta_unified_app` `LiveWaveformView`의 록-프리 링버퍼 + WPF `StreamGeometry` 30fps(재생+가시 시에만 동작, 비활성 시 0% CPU) + `WindowChrome` 반응형 2단/1단 레이아웃 패턴 반영.
+- **자유 리사이즈 & 반응형 2단/1단 UI**: `WindowStyle=None` + `WindowChrome`(`ResizeBorderThickness=7`, `MinWidth=400`, `MinHeight=540`, `760px` 이상 2단 스튜디오 `920×680`, `1080px` 이상 카드 2열, `760px` 미만 1단 슬림 자동 전환, `MiniBarWindow` 가로 리사이즈 `340..720px` + 위치·크기 원자적 저장). 전체 8개 카테고리 탭 `WrapPanel` 줄바꿈으로 어느 창 크기에서도 잘림 0건.
+- **실시간 스테레오 파동 스코프 (`LiveWaveformScope`)**: `AegisDspEngine.SCOPE_RING_SIZE = 4096` L/R 링버퍼, 자동 타임베이스(`~3.5` 주기) 및 상승 영점 교차 트리거, 바이노럴 L(금색)+R(시안) 이중 파형·`180°` 역위상·`144Hz` 반송 상태 및 `-0.5 dBTP` 천장 직관 표기.
+- **정보 전달 구조화 & 편의 기능**: 12세그먼트 LED VU 미터, 4칩 실시간 텔레메트리(`위상·채널`, `변조·보호`, `PC 음향`, `실출력 dBFS`), `[작용]`/`[상황]`/`[보정]` 구조화 설명 카드, 즐겨찾기(별표 필터·트레이 메뉴), 자동 정지 타이머(`15/30/60/90분`), 이전/다음 트랙 이동, 마우스 휠 볼륨(`±2%`), 창 내부 단축키(`Space`, `↑↓`, `M`, `Ctrl+F`, `Ctrl+1..8/0`, `Alt+←/→`).
+- **`100%` ~ `120%` 무왜곡 클린 증폭 (`VolumeCurve`, `AegisDspEngine`)**: 비선형 `tanh` 클리핑 배제, `CLEAN_BOOST_CEILING = -0.50 dBTP`(`0.94406`, Windows WASAPI `CAudioLimiter` ~`0.984` 하단) 선형 헤드룸 + `180ms` 선형 피크 추종 리미터로 `120% (+1.6 dB)` 출력에서도 코히어런트 DFT `THD+N < 0.1%` 검증 통과. 6종 볼륨 디텐트(`15% 영상`/`30% 작업`/`50% 병행`/`80% 단독`/`100% 최대`/`120% 증폭`).
+- **`v3.1 PC` 실측 결과**: `VortaAegisPC.exe`(`146,944 B`), `test_u333_pc_native.py` `1,352,423/0 PASS`(`--self-test` `1,352,351/0 PASS`), `verify_u333_live.py`(와이드 재생 `pc_aegis_v31_wide_playing.png` `94,511 B` · 슬림 바이노럴 재생 `pc_aegis_v31_compact_playing.png` `62,265 B` · 유휴 `pc_aegis_v30_panel.png` `89,275 B`, 트레이 백그라운드 `5.3 MB` / 복귀 `31.5 MB`, PID `28356`).

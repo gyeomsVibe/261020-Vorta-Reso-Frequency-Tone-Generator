@@ -5,9 +5,14 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.media.AudioAttributes;
+import android.media.AudioDeviceCallback;
+import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
@@ -92,7 +97,7 @@ public class A30AudioGeneratorService extends Service {
     public static volatile String sScenarioName = "[오전 07~13시] 3.3~7.3Hz(640초)";
     public static volatile String sModeTitle = "[오전 07~13시] 3.3~7.3Hz(640초) + FM10% + AM80%";
     public static volatile String sKnobGuide = "스마토 앰프 #1: 단일 볼륨 11시~1시 (순수 사인파 120W 모노)";
-    public static volatile int sLastPeak = 32767;
+    public static volatile int sLastPeak = 29200;
     public static volatile double sLastRmsDb = -2.36;
     public static volatile double sLastDcOffset = 0.0;
 
@@ -106,6 +111,11 @@ public class A30AudioGeneratorService extends Service {
     private static final double FREQ_FLOOR_HZ = 1.0; // engine safety only; scenario frequencies are never altered (principle 16)
     private static final double FADE_IN_SEC = 1.0;
     private static final double FADE_OUT_SEC = 0.5;
+    private static final double AUX_MUTE_SEC = 0.02;
+    public static volatile boolean sAuxSuspended = false;
+    private volatile boolean mWiredGuardArmed = false;
+    private volatile boolean mAuxSuspended = false;
+    private AudioDeviceCallback mAudioDeviceCallback;
     private static double mGain = 0.0; // static: fillModulatedChunk is static
     private static volatile boolean mFadeOutRequested = false;
     private static volatile boolean mFadeOutDone = false;
@@ -113,13 +123,8 @@ public class A30AudioGeneratorService extends Service {
 
     private Thread mAudioThread;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
-
-    private final Runnable mVolumeGuardRunnable = new Runnable() {
-        @Override
-        public void run() {
-            // No background polling to allow completely uninhibited volume control
-        }
-    };
+    private BroadcastReceiver mExclusiveReceiver;
+    private BroadcastReceiver mServiceVolReceiver;
 
     public static void loadConfig(Context context) {
         SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
@@ -182,14 +187,7 @@ public class A30AudioGeneratorService extends Service {
     }
 
     public static void muteSystemAlertStreams(Context context) {
-        try {
-            AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-            if (am != null) {
-                am.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0);
-                am.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0);
-                am.setStreamVolume(AudioManager.STREAM_RING, 0, 0);
-            }
-        } catch (Throwable ignored) {}
+        // No-op: A30에서는 알림/시스템/벨소리 등 어떠한 볼륨 설정도 인위적으로 건드리지 않음
     }
 
     @Override
@@ -202,58 +200,200 @@ public class A30AudioGeneratorService extends Service {
             mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VortaResoA30:BitPerfectAudioLock");
             mWakeLock.acquire();
         }
-        A30VolumeHelper.ensureTargetVolumeIfNeeded(this, true);
+        A30VolumeHelper.syncTargetFromSystem(this);
+        A30VolumeHelper.ensureTargetVolumeIfNeeded(this, false);
+        registerExclusiveReceiver();
+        registerVolumeGuardReceiver();
+        registerAuxDeviceCallback();
+    }
+
+    private AudioDeviceInfo findWiredOutputDevice(AudioManager am) {
+        if (am == null || Build.VERSION.SDK_INT < 23) return null;
+        try {
+            AudioDeviceInfo[] devs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+            if (devs != null) {
+                for (int i = 0; i < devs.length; i++) {
+                    if (A30VolumeHelper.isWiredDeviceType(devs[i].getType())) return devs[i];
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    private void registerAuxDeviceCallback() {
+        if (Build.VERSION.SDK_INT < 23 || mAudioDeviceCallback != null) return;
+        try {
+            final AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (am == null) return;
+            mAudioDeviceCallback = new AudioDeviceCallback() {
+                @Override
+                public void onAudioDevicesAdded(AudioDeviceInfo[] addedDevices) {
+                    handleWiredStateChange("DEVICE_ADDED");
+                }
+
+                @Override
+                public void onAudioDevicesRemoved(AudioDeviceInfo[] removedDevices) {
+                    handleWiredStateChange("DEVICE_REMOVED");
+                }
+            };
+            am.registerAudioDeviceCallback(mAudioDeviceCallback, mHandler);
+        } catch (Throwable t) {
+            Log.w(TAG, "registerAuxDeviceCallback: " + t.getMessage());
+        }
+    }
+
+    private void handleWiredStateChange(String reason) {
+        try {
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            AudioDeviceInfo wiredDev = findWiredOutputDevice(am);
+            boolean wiredNow = (wiredDev != null) || A30VolumeHelper.isWired(this);
+            if (wiredNow) {
+                if (mIsRunning) {
+                    mWiredGuardArmed = true;
+                }
+                if (mAudioTrack != null && wiredDev != null && Build.VERSION.SDK_INT >= 23) {
+                    mAudioTrack.setPreferredDevice(wiredDev);
+                }
+                if (mAuxSuspended) {
+                    mAuxSuspended = false;
+                    sAuxSuspended = false;
+                    A30VolumeHelper.onHeadsetPlug(this, 1);
+                    if (mIsRunning) updateNotification();
+                    Log.i(TAG, "[AUX_GUARD] Wired reconnected (" + reason + ") -> resuming with 1.0s fade-in");
+                }
+            } else {
+                if (mIsRunning && mWiredGuardArmed && !mAuxSuspended) {
+                    mAuxSuspended = true;
+                    sAuxSuspended = true;
+                    A30VolumeHelper.onHeadsetPlug(this, 0);
+                    updateNotification();
+                    Log.w(TAG, "[AUX_GUARD] Wired disconnected (" + reason + ") -> muting speaker output (waiting for reconnect)");
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "handleWiredStateChange: " + t.getMessage());
+        }
+    }
+
+    private void registerVolumeGuardReceiver() {
+        if (A30VolumeHelper.isPersonalDevice()) return;
+        if (mServiceVolReceiver != null) return;
+        try {
+            mServiceVolReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent == null) return;
+                    String action = intent.getAction();
+                    if ("android.media.VOLUME_CHANGED_ACTION".equals(action)) {
+                        A30VolumeHelper.onVolumeChanged(context, intent);
+                    } else if (Intent.ACTION_HEADSET_PLUG.equals(action)) {
+                        int st = intent.getIntExtra("state", 0);
+                        A30VolumeHelper.enforceSystemFlags(context);
+                        A30VolumeHelper.onHeadsetPlug(context, st);
+                        handleWiredStateChange("HEADSET_PLUG_" + st);
+                    } else if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(action)) {
+                        handleWiredStateChange("BECOMING_NOISY");
+                    } else if ("com.sec.android.intent.action.SAFE_MEDIA_VOLUME_ACTIVE".equals(action)) {
+                        A30VolumeHelper.enforceSystemFlags(context);
+                        A30VolumeHelper.restoreIfClamped(context, "SAFE_MEDIA_VOLUME_ACTIVE");
+                    }
+                }
+            };
+            IntentFilter filter = new IntentFilter();
+            filter.addAction("android.media.VOLUME_CHANGED_ACTION");
+            filter.addAction(Intent.ACTION_HEADSET_PLUG);
+            filter.addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+            filter.addAction("com.sec.android.intent.action.SAFE_MEDIA_VOLUME_ACTIVE");
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(mServiceVolReceiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(mServiceVolReceiver, filter);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "registerVolumeGuardReceiver error: " + t.getMessage());
+        }
+    }
+
+    private void registerExclusiveReceiver() {
+        if (mExclusiveReceiver != null) return;
+        try {
+            mExclusiveReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent == null) return;
+                    if ("com.vorta.ACTION_EXCLUSIVE_AUDIO_START".equals(intent.getAction())) {
+                        String sender = intent.getStringExtra("sender_pkg");
+                        if (sender != null && !sender.equals(getPackageName()) && mIsRunning) {
+                            Log.i(TAG, "Yielding audio output to sibling Vorta app: " + sender);
+                            stopAudio();
+                            stopForeground(true);
+                            stopSelf();
+                        }
+                    }
+                }
+            };
+            IntentFilter filter = new IntentFilter("com.vorta.ACTION_EXCLUSIVE_AUDIO_START");
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(mExclusiveReceiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(mExclusiveReceiver, filter);
+            }
+        } catch (Throwable ignored) {}
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        muteSystemAlertStreams(this);
-        if (intent != null) {
-            if (intent.hasExtra("part")) {
-                sActivePart = intent.getStringExtra("part");
-            }
-            if (intent.hasExtra("scenario")) {
-                sScenarioName = intent.getStringExtra("scenario");
-            }
+        if (Build.VERSION.SDK_INT >= 26) {
+            updateNotification();
         }
-
-        if (intent != null) {
-            String action = intent.getStringExtra("action");
-            if ("stop".equalsIgnoreCase(action)) {
-                stopAudio();
+        muteSystemAlertStreams(this);
+        if (intent == null) {
+            if (!mIsRunning) {
                 stopForeground(true);
                 stopSelf();
                 return START_NOT_STICKY;
             }
+            return START_STICKY;
+        }
+        if (intent.hasExtra("part")) {
+            sActivePart = intent.getStringExtra("part");
+        }
+        if (intent.hasExtra("scenario")) {
+            sScenarioName = intent.getStringExtra("scenario");
+        }
 
-            boolean dspChanged = false;
-            if (intent.hasExtra("auto_preset_dsp")) {
-                sAutoPresetDsp = intent.getBooleanExtra("auto_preset_dsp", sAutoPresetDsp);
-                dspChanged = true;
-            }
-            if (intent.hasExtra("bass_boost_db")) {
-                sBassBoostDb = intent.getFloatExtra("bass_boost_db", sBassBoostDb);
-                dspChanged = true;
-            }
-            if (intent.hasExtra("limiter_mode")) {
-                sLimiterMode = intent.getIntExtra("limiter_mode", sLimiterMode);
-                dspChanged = true;
-            }
-            if (intent.hasExtra("channel_mode")) {
-                sChannelMode = intent.getIntExtra("channel_mode", sChannelMode);
-                dspChanged = true;
-            }
-            if (intent.hasExtra("harmonic_exciter")) {
-                sHarmonicExciter = intent.getBooleanExtra("harmonic_exciter", sHarmonicExciter);
-                dspChanged = true;
-            }
-            if (dspChanged) {
-                saveConfig(this);
-            }
+        String action = intent.getStringExtra("action");
+        if ("stop".equalsIgnoreCase(action)) {
+            stopAudio();
+            stopForeground(true);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
 
-            if (intent.hasExtra("vol_step")) {
-                A30VolumeHelper.sTargetVolumeStep = intent.getIntExtra("vol_step", 15);
-            }
+        boolean dspChanged = false;
+        if (intent.hasExtra("auto_preset_dsp")) {
+            sAutoPresetDsp = intent.getBooleanExtra("auto_preset_dsp", sAutoPresetDsp);
+            dspChanged = true;
+        }
+        if (intent.hasExtra("bass_boost_db")) {
+            sBassBoostDb = intent.getFloatExtra("bass_boost_db", sBassBoostDb);
+            dspChanged = true;
+        }
+        if (intent.hasExtra("limiter_mode")) {
+            sLimiterMode = intent.getIntExtra("limiter_mode", sLimiterMode);
+            dspChanged = true;
+        }
+        if (intent.hasExtra("channel_mode")) {
+            sChannelMode = intent.getIntExtra("channel_mode", sChannelMode);
+            dspChanged = true;
+        }
+        if (intent.hasExtra("harmonic_exciter")) {
+            sHarmonicExciter = intent.getBooleanExtra("harmonic_exciter", sHarmonicExciter);
+            dspChanged = true;
+        }
+        if (dspChanged) {
+            saveConfig(this);
+        }
 
             boolean hasPresetFreq = intent.hasExtra("sweep") || intent.hasExtra("freq") || intent.hasExtra("mode");
             if (hasPresetFreq) {
@@ -308,9 +448,14 @@ public class A30AudioGeneratorService extends Service {
             }
 
             mAuditRequested = true;
+            try {
+                Intent excl = new Intent("com.vorta.ACTION_EXCLUSIVE_AUDIO_START");
+                excl.putExtra("sender_pkg", getPackageName());
+                sendBroadcast(excl);
+            } catch (Throwable ignored) {}
+            A30VolumeHelper.ensureTargetVolumeIfNeeded(this, false);
             startAudioIfNeeded();
             updateNotification();
-        }
         return START_STICKY;
     }
 
@@ -340,7 +485,7 @@ public class A30AudioGeneratorService extends Service {
         StringBuilder sb = new StringBuilder();
         sb.append(sAutoPresetDsp ? "[자동맞춤] " : "[수동고정] ");
         sb.append(String.format("부스트:+%.0fdB", sBassBoostDb));
-        sb.append(sLimiterMode == 1 ? " | 소프트새추레이터" : " | 트루피크0dBFS");
+        sb.append(sLimiterMode == 1 ? " | 소프트새추레이터" : " | 트루피크-1.0dBTP");
         if (sChannelMode == 1) {
             sb.append(" | L=-R역위상");
         } else if (sChannelMode == 2) {
@@ -371,7 +516,8 @@ public class A30AudioGeneratorService extends Service {
         }
 
         Intent notifIntent = new Intent(this, MainActivity.class);
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notifIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notifIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
 
         String detail = sIsSweepMode
                 ? String.format("%.1f~%.1fHz(%.0fs) | %s", sSweepMin, sSweepMax, sSweepPeriodSec, buildModulationSummary())
@@ -381,8 +527,12 @@ public class A30AudioGeneratorService extends Service {
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
 
-        builder.setContentTitle("보르타 레조 [" + sModeTitle + "]")
-                .setContentText(detail + " | DSP: " + buildVortaDspSummary())
+        String title = mAuxSuspended ? ("🔇 AUX 분리(스피커 차단) | " + sModeTitle) : ("보르타 레조 [" + sModeTitle + "]");
+        String body = mAuxSuspended
+                ? "AUX 분리 감지 - 스피커 송출 차단 / 재연결 시 1.0초 페이드인 복구"
+                : (detail + " | DSP: " + buildVortaDspSummary());
+        builder.setContentTitle(title)
+                .setContentText(body)
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
@@ -485,15 +635,22 @@ public class A30AudioGeneratorService extends Service {
                 if (rmPhase >= twoPi) rmPhase -= twoPi;
             }
 
-                        // 5. Pure Undistorted Sine Wave Engine (-1.0 dBTP True-Peak Ceiling)
-            // Eliminates harmonic distortion, clipping buzzing, and voice coil overheating,
-            // focusing 100% acoustic energy into pure fundamental kinetic vibration!
+            // 5. Pure Undistorted Sine Wave Engine (-1.0 dBTP True-Peak Ceiling)
+            // Zero flat-top hard clipping in limiterMode 0; smooth normalized tanh in limiterMode 1.
             final double TRUE_PEAK_CEILING = 0.89125; // -1.0 dBTP True-Peak Headroom
+            if (limiterMode == 1 && driveK > 1.001) {
+                sig = Math.tanh(driveK * sig) * invTanhK;
+            }
             if (sig > 1.0) sig = 1.0;
             else if (sig < -1.0) sig = -1.0;
             if (mFadeOutRequested) {
                 mGain -= 1.0 / (FADE_OUT_SEC * SAMPLE_RATE);
                 if (mGain <= 0.0) { mGain = 0.0; mFadeOutDone = true; }
+            } else if (sAuxSuspended) {
+                if (mGain > 0.0) {
+                    mGain -= 1.0 / (AUX_MUTE_SEC * SAMPLE_RATE);
+                    if (mGain < 0.0) mGain = 0.0;
+                }
             } else if (mGain < 1.0) {
                 mGain += 1.0 / (FADE_IN_SEC * SAMPLE_RATE);
                 if (mGain > 1.0) mGain = 1.0;
@@ -570,7 +727,12 @@ public class A30AudioGeneratorService extends Service {
         mFadeOutRequested = false;
         mFadeOutDone = false;
         saveConfig(this);
-        mHandler.post(mVolumeGuardRunnable);
+
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        AudioDeviceInfo wiredDev = findWiredOutputDevice(am);
+        mWiredGuardArmed = (wiredDev != null) || A30VolumeHelper.isWired(this);
+        mAuxSuspended = false;
+        sAuxSuspended = false;
 
         int minBuf = AudioTrack.getMinBufferSize(
                 SAMPLE_RATE,
@@ -579,14 +741,30 @@ public class A30AudioGeneratorService extends Service {
         );
         int finalBufBytes = Math.max(minBuf * 4, TRACK_BUFFER_BYTES);
 
-        mAudioTrack = new AudioTrack(
-                AudioManager.STREAM_MUSIC,
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_OUT_STEREO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                finalBufBytes,
-                AudioTrack.MODE_STREAM
-        );
+        if (Build.VERSION.SDK_INT >= 21) {
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build();
+            AudioFormat fmt = new AudioFormat.Builder()
+                    .setSampleRate(SAMPLE_RATE)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                    .build();
+            mAudioTrack = new AudioTrack(attrs, fmt, finalBufBytes, AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE);
+            if (wiredDev != null && Build.VERSION.SDK_INT >= 23) {
+                mAudioTrack.setPreferredDevice(wiredDev);
+            }
+        } else {
+            mAudioTrack = new AudioTrack(
+                    AudioManager.STREAM_MUSIC,
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_OUT_STEREO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    finalBufBytes,
+                    AudioTrack.MODE_STREAM
+            );
+        }
 
         mAudioThread = new Thread(new Runnable() {
             @Override
@@ -619,6 +797,8 @@ public class A30AudioGeneratorService extends Service {
                     Log.i(TAG, "A30 Vorta Reso v2.6 48kHz Stereo Bit-Perfect AudioTrack started (pre-filled 2 chunks, 0 underrun)");
                 }
 
+                long lastGuardMs = System.currentTimeMillis();
+                long lastAuditMs = 0L;
                 while (mIsRunning) {
                     // Phase stays continuous across preset changes: a phase jump is a click.
                     mPhaseResetRequested = false;
@@ -630,8 +810,10 @@ public class A30AudioGeneratorService extends Service {
                             sRmEnabled, sRmDepth, sRmRateHz,
                             sBassBoostDb, sLimiterMode, sChannelMode, sHarmonicExciter);
 
-                    if (mAuditRequested) {
+                    long guardNow = System.currentTimeMillis();
+                    if (mAuditRequested || (mGain >= 0.999 && guardNow - lastAuditMs >= 10000L)) {
                         mAuditRequested = false;
+                        lastAuditMs = guardNow;
                         auditBuffer(stereoChunk, shorts);
                     }
 
@@ -657,7 +839,6 @@ public class A30AudioGeneratorService extends Service {
         mIsRunning = false;
         sIsPlaying = false;
         saveConfig(this);
-        mHandler.removeCallbacks(mVolumeGuardRunnable);
         if (mAudioThread != null) {
             try {
                 mAudioThread.join(600);
@@ -679,6 +860,28 @@ public class A30AudioGeneratorService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        mWiredGuardArmed = false;
+        mAuxSuspended = false;
+        sAuxSuspended = false;
+        if (mAudioDeviceCallback != null && Build.VERSION.SDK_INT >= 23) {
+            try {
+                AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                if (am != null) am.unregisterAudioDeviceCallback(mAudioDeviceCallback);
+            } catch (Throwable ignored) {}
+            mAudioDeviceCallback = null;
+        }
+        if (mExclusiveReceiver != null) {
+            try {
+                unregisterReceiver(mExclusiveReceiver);
+            } catch (Throwable ignored) {}
+            mExclusiveReceiver = null;
+        }
+        if (mServiceVolReceiver != null) {
+            try {
+                unregisterReceiver(mServiceVolReceiver);
+            } catch (Throwable ignored) {}
+            mServiceVolReceiver = null;
+        }
         stopAudio();
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();

@@ -67,8 +67,38 @@ settings put global stay_on_while_plugged_in 0
 settings put global protect_battery 1
 settings put system protect_battery 1
 settings put system adaptive_fast_charging 0
+# Layer 1 & 2: BIOS/SystemProperty + Samsung SAFE_MEDIA_VOLUME_INACTIVE(2) + 20h Timer Zeroing
 settings put global audio_safe_volume_state 2
+settings put global safe_media_volume_active 0
+settings put global safe_media_volume_enabled 0
+settings put secure unsafe_volume_music_active_ms 0
+settings put system master_mono 0
+settings put system safe_volume_state 0
+settings put system safe_volume_multimedia 0
 settings put system volume_limiter_enable 0
+settings put system volume_limiter_value 15
+settings put system volumelimit_on 0
+settings put system earphone_safety_volume 0
+settings put system volumelimit_on 0
+settings put secure audio_safe_volume_state 2
+settings put system mono_audio 0
+settings put system master_mono 0
+for PKG in com.vorta.s6frequency com.vorta.s7frequency com.smato.a30frequency com.vorta.freqgen; do
+  pm grant $PKG android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1
+  appops set $PKG WRITE_SETTINGS allow >/dev/null 2>&1
+  appops set $PKG RUN_IN_BACKGROUND allow >/dev/null 2>&1
+  appops set $PKG WAKE_LOCK allow >/dev/null 2>&1
+  dumpsys deviceidle whitelist +$PKG >/dev/null 2>&1
+done
+settings put system volume_limiter 0
+settings put system k2hd_effect 0
+settings put system tube_amp_effect 0
+settings put system uhqa_effect 0
+settings put system sound_alive_effect 0
+settings put system concert_hall_effect 0
+settings put secure enabled_accessibility_services "com.vorta.s6frequency/com.vorta.s6frequency.S6AccessibilityService"
+settings put secure accessibility_enabled 1
+am broadcast -a com.vorta.s6frequency.ACTION_SAFE_VOLUME_CHECK -p com.vorta.s6frequency --include-stopped-packages >/dev/null 2>&1
 for p in com.sec.android.app.soundalive com.sec.hearingadjust com.enhance.gameservice com.samsung.android.game.gos; do
   pm path "$p" >/dev/null 2>&1 && timeout -k 2 $T pm disable-user --user 0 "$p" >/dev/null 2>&1 && log "frozen $p"
 done
@@ -83,6 +113,9 @@ dumpsys deviceidle whitelist +com.vorta.s6frequency >/dev/null 2>&1
 
 # 4) Principle 1/8: media volume is never forced (user sets it; 11-12 suggested per preset);
 #    only system/ring/notification streams are muted.
+settings put system volume_ring 0 >/dev/null 2>&1
+settings put system volume_system 0 >/dev/null 2>&1
+settings put system volume_notification 0 >/dev/null 2>&1
 media volume --stream 1 --set 0 >/dev/null 2>&1
 media volume --stream 2 --set 0 >/dev/null 2>&1
 media volume --stream 5 --set 0 >/dev/null 2>&1

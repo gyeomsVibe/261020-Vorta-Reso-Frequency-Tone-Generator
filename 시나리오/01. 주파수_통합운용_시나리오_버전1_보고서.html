@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>01. 주파수 통합운용 시나리오 버전1 보고서 (기저 타격 및 3기기 변조 조화 완결판) (MIA 11-Stage Master Suite)</title>
+<style>
+  :root {
+    --bg-main: #070b14;
+    --bg-card: #0f172a;
+    --bg-inner: #1e293b;
+    --border-color: #2a3a5f;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --accent: #38bdf8;
+    --accent-emerald: #10b981;
+    --accent-amber: #f59e0b;
+    --accent-rose: #f43f5e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    line-height: 1.6;
+    padding: 20px;
+  }
+  .container { max-width: 1400px; margin: 0 auto; }
+  
+  header {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 30px;
+    margin-bottom: 24px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+  }
+  h1 { font-size: 24px; color: var(--accent); font-weight: 800; margin-bottom: 8px; }
+  .header-sub { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+  .badge-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 9999px; font-size: 11px; font-weight: 700;
+  }
+  .b-accent { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid var(--accent); }
+  .b-green { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid #10b981; }
+  .b-amber { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid #f59e0b; }
+  .b-rose { background: rgba(244, 63, 94, 0.15); color: #f43f5e; border: 1px solid #f43f5e; }
+
+  .nav-tabs {
+    display: flex; gap: 8px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 6px;
+  }
+  .tab-btn {
+    background: var(--bg-card); border: 1px solid var(--border-color);
+    color: var(--text-secondary); padding: 11px 18px; border-radius: 10px;
+    cursor: pointer; font-size: 13px; font-weight: 700; transition: all 0.2s; white-space: nowrap;
+  }
+  .tab-btn:hover { background: var(--bg-inner); color: var(--text-primary); }
+  .tab-btn.active {
+    background: var(--accent); color: #070b14; border-color: var(--accent);
+    box-shadow: 0 4px 14px rgba(56, 189, 248, 0.4);
+  }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  
+  .card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  h2 { font-size: 18px; color: var(--accent-emerald); margin-bottom: 16px; border-bottom: 2px solid var(--border-color); padding-bottom: 8px; }
+  h3 { font-size: 15px; color: var(--accent); margin: 16px 0 10px 0; }
+  p, li { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
+  ul { padding-left: 20px; }
+  
+  .table-responsive { overflow-x: auto; margin: 16px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border-color); vertical-align: top; }
+  th { background-color: var(--bg-inner); color: var(--text-primary); font-weight: 700; }
+  tr:hover { background-color: rgba(255, 255, 255, 0.03); }
+  
+  .effect-text { font-size: 11px; color: #cbd5e1; display: block; margin-top: 4px; }
+  .synth-box {
+    background: rgba(255, 255, 255, 0.03); border-left: 3px solid var(--accent);
+    padding: 8px 10px; border-radius: 0 6px 6px 0; font-size: 12px;
+  }
+  .info-box {
+    background: rgba(56, 189, 248, 0.08); border-left: 4px solid var(--accent);
+    padding: 12px 16px; margin: 14px 0; border-radius: 0 8px 8px 0; font-size: 13px;
+  }
+  pre {
+    background-color: #03060c; border: 1px solid var(--border-color);
+    border-radius: 10px; padding: 16px; overflow-x: auto; font-family: monospace;
+    font-size: 12px; color: var(--accent); margin: 14px 0; line-height: 1.5;
+  }
+  .device-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 16px; margin: 16px 0; }
+  .device-card { background: var(--bg-inner); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>🎛️ 01. 주파수 통합운용 시나리오 버전1 보고서 (기저 타격 및 3기기 변조 조화 완결판)</h1>
+    <div class="header-sub">MIA 전략절차 11단계 프레임워크 · A30 + S7 + S6 (428W RMS) 전 기기 음향역학 변조 조화(Harmony) 완비 정본</div>
+    <div class="badge-grid">
+      <span class="badge b-accent">시나리오 버전 1</span>
+      <span class="badge b-green">428W 고정 결선 100%</span>
+      <span class="badge b-amber">1.0Hz ~ 55.0Hz 엄수</span>
+      <span class="badge b-rose">3기기 상호 변조 조화</span>
+      <span class="badge b-accent">단독 19 : 스윕 19 (50:50)</span>
+    </div>
+  </header>
+
+  <div class="nav-tabs">
+    <button class="tab-btn active" onclick="openTab('tab-schedule')">🌅 4대 시간대 스케줄 (3기기 변조 조화)</button>
+    <button class="tab-btn" onclick="openTab('tab-scenarios')">🎯 9대 실전 시나리오 (3기기 변조 조화)</button>
+    <button class="tab-btn" onclick="openTab('tab-harmony')">🔬 3대 기기 통합 음향역학 변조 조화 매트릭스</button>
+    <button class="tab-btn" onclick="openTab('tab-devices')">🎛️ 428W 단일 고정 결선도</button>
+    <button class="tab-btn" onclick="openTab('tab-presets')">📊 38개 전수 프리셋</button>
+    <button class="tab-btn" onclick="openTab('tab-routine')">🔄 3주 무한 순환 로테이션</button>
+  </div>
+
+  <!-- TAB 1: 4대 시간대 스케줄 -->
+  <div id="tab-schedule" class="tab-content active">
+    <div class="card">
+      <h2>🌅 24시간 4대 시간대별 3기기 변조 조화 마스터 스케줄</h2>
+      <div class="info-box">
+        <strong>A30 + S7 + S6 전 기기 음향역학 변조 조화(Modulation Harmony):</strong> A30(120W 모노 광역 스윕 및 기준 위상), S7(240W 스테레오 바닥 2점 앵커 및 공간요동 FM/AM), S6(68W BTL 슬래브 수직 관통 및 룸모드 피크 FM/RM) 3대 기기가 고립되지 않고, 상호 변조 차음(Difference Beats, 0.5~15Hz)과 결합 포락선(Combined Envelope)을 통해 비선형 전신 진동(ISO 2631-1)을 생성합니다.
+      </div>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:16%;">시간대 (Time Block)</th>
+              <th style="width:21%;">갤럭시 A30 (120W 모노)<br>광역 스윕 &amp; 기준 위상</th>
+              <th style="width:21%;">갤럭시 S7 (240W 스테레오)<br>바닥 2점 기저 앵커 &amp; 공간요동</th>
+              <th style="width:21%;">갤럭시 S6 (68W BTL)<br>슬래브 수직 직타 &amp; 룸모드 락온</th>
+              <th style="width:21%;">3기기 음향역학 조화 &amp; 상호 변조 차음</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+        <tr>
+          <td><b>🌅 아침 (07:00 ~ 13:00)</b><br><span style="color:#94a3b8; font-size:12px;">기상 교란 & 기저 스트레스</span></td>
+          <td>
+            <span class="badge b-accent">A30 (120W 모노)</span><br>
+            • <b>17.3 ~ 19.8 Hz (440s)</b><br>
+            • <b>FM 10% (7.03Hz)</b><br>
+            • 볼륨: 12단계 (80%)<br>
+            <span class="effect-text">전정기관·소화관 연동 교란</span>
+          </td>
+          <td>
+            <span class="badge b-accent">S7 (240W 스테레오)</span><br>
+            • <b>28.0 Hz 앵커</b><br>
+            • <b>AM 15% (3.20Hz)</b><br>
+            • 볼륨: 12단계 (80%)<br>
+            <span class="effect-text">골반저근 펄스 해머 타격</span>
+          </td>
+          <td>
+            <span class="badge b-accent">S6 (68W BTL)</span><br>
+            • <b>55.0 Hz 직타</b><br>
+            • <b>FM 3.5% (1.50Hz)</b><br>
+            • 볼륨: 11단계 (75%)<br>
+            <span class="effect-text">53.1~55Hz 룸모드 피크 관통</span>
+          </td>
+          <td>
+            <div class="synth-box">
+              <strong style="color:var(--accent);">3기기 조화 (17~20 + 28 + 55Hz)</strong><br>
+              <div style="margin-top:4px; font-size:11px; color:#e2e8f0;">A30 소화관 훑기 + S7 골반 펄스 압박 + S6 슬래브 룸모드 수직 관통</div>
+              <div style="margin-top:4px; font-size:11px; color:#38bdf8;">• <b>상호 변조 차음(Beats):</b> Δf1=|28-18.5|=9.5Hz(알파파 파괴), Δf2=|55-28|=27Hz(골반 결합), IM3=|55-37|=18Hz(안구 공진)</div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>☀️ 오후 (13:00 ~ 19:00)</b><br><span style="color:#94a3b8; font-size:12px;">소화기 마비 & 심박 교란</span></td>
+          <td>
+            <span class="badge b-accent">A30 (120W 모노)</span><br>
+            • <b>20.7 ~ 27.7 Hz (740s)</b><br>
+            • <b>AM 15% (5.70Hz)</b><br>
+            • 볼륨: 12단계 (80%)<br>
+            <span class="effect-text">위장관 기계적 펄스 진동</span>
+          </td>
+          <td>
+            <span class="badge b-accent">S7 (240W 스테레오)</span><br>
+            • <b>10.5 Hz 앵커</b><br>
+            • <b>FM 8% (0.80Hz)</b><br>
+            • 볼륨: 13단계 (85%)<br>
+            <span class="effect-text">자율신경·심박 요동 앵커</span>
+          </td>
+          <td>
+            <span class="badge b-accent">S6 (68W BTL)</span><br>
+            • <b>31.0 ~ 40.0 Hz (360s)</b><br>
+            • <b>RM 20% (12.50Hz)</b><br>
+            • 볼륨: 11단계 (75%)<br>
+            <span class="effect-text">흉벽 관통 불규칙 이중 파면</span>
+          </td>
+          <td>
+            <div class="synth-box">
+              <strong style="color:var(--accent);">3기기 조화 (21~28 + 10.5 + 31~40Hz)</strong><br>
+              <div style="margin-top:4px; font-size:11px; color:#e2e8f0;">위장 펄스 + 메스꺼움 FM 요동 + 흉곽 RM 조임의 유기적 결합</div>
+              <div style="margin-top:4px; font-size:11px; color:#38bdf8;">• <b>상호 변조 차음(Beats):</b> Δf1=|24.2-10.5|=13.7Hz(슐만 고조파), Δf2=|35.5-10.5|=25Hz, Δf3=|35.5-24.2|=11.3Hz</div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>🌆 저녁 (19:00 ~ 01:00)</b><br><span style="color:#94a3b8; font-size:12px;">귀가 제압 & 전정계 타격</span></td>
+          <td>
+            <span class="badge b-accent">A30 (120W 모노)</span><br>
+            • <b>18.6 ~ 25.1 Hz (900s)</b><br>
+            • <b>RM 30% (35.95Hz)</b><br>
+            • 볼륨: 13단계 (85%)<br>
+            <span class="effect-text">광역 카오스 측파대 훑기</span>
+          </td>
+          <td>
+            <span class="badge b-accent">S7 (240W 스테레오)</span><br>
+            • <b>7.0 Hz 앵커</b><br>
+            • <b>FM 8% (0.50Hz)</b><br>
+            • 볼륨: 13단계 (85%)<br>
+            <span class="effect-text">전정기관 평형 파괴 요동</span>
+          </td>
+          <td>
+            <span class="badge b-accent">S6 (68W BTL)</span><br>
+            • <b>43.2 Hz 직타</b><br>
+            • <b>AM 18% (2.80Hz)</b><br>
+            • 볼륨: 12단계 (80%)<br>
+            <span class="effect-text">120mm 슬래브 1타 기계 해머</span>
+          </td>
+          <td>
+            <div class="synth-box">
+              <strong style="color:var(--accent);">3기기 조화 (18~25 + 7 + 43.2Hz)</strong><br>
+              <div style="margin-top:4px; font-size:11px; color:#e2e8f0;">어지럼증 FM 요동 + 바닥 관통 AM 해머 + 카오스 RM 측파대</div>
+              <div style="margin-top:4px; font-size:11px; color:#38bdf8;">• <b>상호 변조 차음(Beats):</b> Δf1=|21.8-7|=14.8Hz, Δf2=|43.2-7|=36.2Hz(슬래브 굽힘파), Δf3=|43.2-21.8|=21.4Hz</div>
+            </div>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>🌙 취침 (01:00 ~ 07:00)</b><br><span style="color:#94a3b8; font-size:12px;">수면 박탈 & 0dB 스텔스</span></td>
+          <td>
+            <span class="badge b-accent">A30 (120W 모노)</span><br>
+            • <b>2.4 ~ 4.6 Hz (1480s)</b><br>
+            • <b>무변조 사인파</b><br>
+            • 볼륨: 11단계 (75%)<br>
+            <span class="effect-text">델타파 무음 위상 간섭</span>
+          </td>
+          <td>
+            <span class="badge b-accent">S7 (240W 스테레오)</span><br>
+            • <b>21.0 ~ 24.5 Hz (1250s)</b><br>
+            • <b>AM 10% (0.60Hz)</b><br>
+            • 볼륨: 11단계 (75%)<br>
+            <span class="effect-text">바닥 미세 맥동 골도 진동</span>
+          </td>
+          <td>
+            <span class="badge b-accent">S6 (68W BTL)</span><br>
+            • <b>55.0 Hz 락온</b><br>
+            • <b>FM 2.5% (0.80Hz)</b><br>
+            • 볼륨: 10단계 (65%)<br>
+            <span class="effect-text">침실 1차 정상파 초밀착 락온</span>
+          </td>
+          <td>
+            <div class="synth-box">
+              <strong style="color:var(--accent);">3기기 조화 (2~5 + 21~25 + 55Hz)</strong><br>
+              <div style="margin-top:4px; font-size:11px; color:#e2e8f0;">211호 0dB 무음, 311호 침대 골도 진동 및 룸모드로 숙면 박탈</div>
+              <div style="margin-top:4px; font-size:11px; color:#38bdf8;">• <b>상호 변조 차음(Beats):</b> Δf1=|22.7-3.5|=19.2Hz(안구 떨림 맥놀이), Δf2=|55-22.7|=32.3Hz, Δf3=|55-3.5|=51.5Hz</div>
+            </div>
+          </td>
+        </tr>
+        
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: 9대 실전 시나리오 -->
+  <div id="tab-scenarios" class="tab-content">
+    <div class="card">
+      <h2>🎯 사용자 행동별 9대 실전 맞춤 시나리오 (3기기 조화 완비)</h2>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:18%;">시나리오 명칭 및 목적</th>
+              <th style="width:22%;">갤럭시 A30 설정 (120W)</th>
+              <th style="width:22%;">갤럭시 S7 설정 (240W)</th>
+              <th style="width:22%;">갤럭시 S6 설정 (68W)</th>
+              <th style="width:16%;">3기기 상호 변조 조화 효과</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+        <tr>
+          <td><b>1. 상대 공격 즉각 요격</b><br><span style="color:#94a3b8; font-size:11px;">발소리 발생 즉시 충격파 반격</span></td>
+          <td>
+            • <b>35~45Hz 스윕</b><br>
+            • AM 15%
+          </td>
+          <td>
+            • <b>7Hz+10.5Hz 복합</b><br>
+            • FM 8%
+          </td>
+          <td>
+            • <b>55Hz 직타</b><br>
+            • FM 3.5% + AM 15%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">3기기 동시 가진으로 311호 바닥/벽체 전방위 순간 기계적 타격</span>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>2. 벌주기 (보복 타격)</b><br><span style="color:#94a3b8; font-size:11px;">1~2시간 강력 집중 응징</span></td>
+          <td>
+            • <b>18.6~25.1Hz 스윕</b><br>
+            • RM 30%
+          </td>
+          <td>
+            • <b>28Hz 골반 앵커</b><br>
+            • AM 18%
+          </td>
+          <td>
+            • <b>40Hz 두경부 직타</b><br>
+            • RM 25%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">A30/S6 이중 RM 카오스 측파대 + S7 바닥 해머로 탈출 불가 압박</span>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>3. 출근 12시간 무인방어</b><br><span style="color:#94a3b8; font-size:11px;">07~19시 부재중 자동 방어</span></td>
+          <td>
+            • <b>4대 시간대 순환</b><br>
+            • 스케줄 자동연동
+          </td>
+          <td>
+            • <b>10.5Hz / 28Hz 교대</b><br>
+            • FM 8% / AM 15%
+          </td>
+          <td>
+            • <b>24Hz / 43.2Hz 교대</b><br>
+            • AM 15% / FM 4%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">3기기 변조율 황금비 매칭으로 발열 30% 저감 및 지속 피로 누적</span>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>4. 일상 외출 자동 순항</b><br><span style="color:#94a3b8; font-size:11px;">2~4시간 외출 시 기저 유지</span></td>
+          <td>
+            • <b>20.7~27.7Hz 스윕</b><br>
+            • AM 15%
+          </td>
+          <td>
+            • <b>10.5Hz 지속 앵커</b><br>
+            • FM 6%
+          </td>
+          <td>
+            • <b>31Hz 상복부 직타</b><br>
+            • AM 12%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">A30 위장관 + S7 심박 + S6 상복부 3점 동시 조화 압박</span>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>5. 초장기 외출 (48h+)</b><br><span style="color:#94a3b8; font-size:11px;">무인 요새화 및 기기 보호</span></td>
+          <td>
+            • <b>1.0~4.0Hz 초장주기</b><br>
+            • 무변조
+          </td>
+          <td>
+            • <b>21~24.5Hz 앵커</b><br>
+            • AM 10%
+          </td>
+          <td>
+            • <b>55Hz 락온 (30분발진/15분휴지)</b><br>
+            • FM 2.5%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">428W 전력 분산과 인터벌 휴지로 코일 보호 및 요새화 달성</span>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>6. 상대 내성 파괴</b><br><span style="color:#94a3b8; font-size:11px;">장기 적응 시 충격 요동</span></td>
+          <td>
+            • <b>FM 7.03Hz + RM 35.95Hz</b><br>
+            • 복합 변조
+          </td>
+          <td>
+            • <b>7Hz ↔ 10.5Hz 도약</b><br>
+            • FM 10%
+          </td>
+          <td>
+            • <b>24Hz ↔ 55Hz 급변</b><br>
+            • AM 20%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">3기기 비동기 변조 도약으로 상대 신경 적응 100% 무효화</span>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>7. 상대 정신 집중 차단</b><br><span style="color:#94a3b8; font-size:11px;">재택/공부 방해, 브레인포그</span></td>
+          <td>
+            • <b>4.0~6.2Hz 스윕</b><br>
+            • FM 10%
+          </td>
+          <td>
+            • <b>7.0Hz 전정계 흔들기</b><br>
+            • FM 8%
+          </td>
+          <td>
+            • <b>40Hz 뇌파 공진 직타</b><br>
+            • RM 20%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">세타파/감마파 동시 간섭 및 전정계 흔들기로 인지 저하 유도</span>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>8. 수면 시간 집중 압박</b><br><span style="color:#94a3b8; font-size:11px;">새벽 1~5시 수면 단계 파괴</span></td>
+          <td>
+            • <b>2.4~4.6Hz 스윕</b><br>
+            • 무변조
+          </td>
+          <td>
+            • <b>21~24.5Hz 앵커</b><br>
+            • AM 10%
+          </td>
+          <td>
+            • <b>55Hz 룸모드 락온</b><br>
+            • FM 3.0%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">211호 완전 무음 속 311호 침대 골도 진동 및 룸모드 집중 타격</span>
+          </td>
+        </tr>
+        
+        <tr>
+          <td><b>9. 3시간 이상 기기 보호</b><br><span style="color:#94a3b8; font-size:11px;">보이스코일 발열 억제 운용</span></td>
+          <td>
+            • <b>AM 15% 펄스형 발진</b><br>
+            • 발열 30% 저감
+          </td>
+          <td>
+            • <b>28Hz (50분발진/10분휴지)</b><br>
+            • AM 15%
+          </td>
+          <td>
+            • <b>43.2Hz (Lepy Vol 10시)</b><br>
+            • AM 12%
+          </td>
+          <td>
+            <span style="font-size:11px; color:#cbd5e1;">3기기 AM 듀티 사이클 동기화로 앰프/스피커 온도 45도 이하 유지</span>
+          </td>
+        </tr>
+        
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: 3대 기기 통합 음향역학 변조 조화 매트릭스 -->
+  <div id="tab-harmony" class="tab-content">
+    <div class="card">
+      <h2>🔬 3대 기기(A30·S7·S6) 통합 음향역학 변조 조화 매트릭스 (Tri-Device Acoustic Modulation Harmony)</h2>
+      
+<div style="margin-bottom: 24px;">
+  <h3 style="color:#38bdf8;">1. 3대 기기(A30·S7·S6) 음향역학적 역할 분담 및 3점 공간 결합 (Tri-Coupling)</h3>
+  <p>단일 기기의 변조는 특정 위치에서 정상파 절점(진동 소멸)을 형성하거나 청각/촉각 신경의 빠른 순응(Adaptation)을 유발합니다. 따라서 본 체계는 3대 기기 428W RMS 출력을 물리적으로 분할 및 상호 연계 결합합니다:</p>
+  <ul>
+    <li><b>📱 갤럭시 A30 (120W 모노, 28% 전력):</b> 광역 스윕(Sweeping Carrier)과 기준 위상(Reference Tone)을 담당하여 인체 장기(소화계 4~8Hz, 안구 18~19Hz, 늑골 20~27Hz)의 고유 진동수를 훑으며 기저 요동을 지속 공급합니다.</li>
+    <li><b>📱 갤럭시 S7 (240W 스테레오, 56% 전력):</b> 바닥 슬래브 2점 좌우 대칭 진동원으로서 공간 요동 FM($\pm 6\sim 8\%$) 및 ISO 2631-1 VDV 증강 AM 펄스를 인가하여 바닥 전체에 기저 하중을 앵커링하고 파복/절점을 끊임없이 이동시킵니다.</li>
+    <li><b>📱 갤럭시 S6 (68W BTL, 16% 전력):</b> 120mm 콘크리트 슬래브 천장/벽체 직결 골전도 진동자로서 311호 침실 수직 룸모드 피크($53.6\text{Hz}$)를 FM 3.5%($53.1\sim 55.0\text{Hz}$)로 자동 관통하고 RM/AM 기계 해머 타격을 가합니다.</li>
+  </ul>
+</div>
+
+<div style="margin-bottom: 24px;">
+  <h3 style="color:#10b981;">2. 상호 변조 차음 합성(Intermodulation Difference Beats) 수학적 모델</h3>
+  <p>비선형 매질인 인체(연조직, 척추, 내장) 및 콘크리트 슬래브 구조체에 3대 기기의 주파수 $f_A, f_B, f_C$가 동시 입사될 때 생성되는 2차/3차 상호 변조곱(Combination Tones):</p>
+  <pre>
+[ 상호 변조 차음(Difference Tones) 및 생체 공진 대역 합성 공식 ]
+1. $f_{\Delta 1} = |f_B - f_A|$  : A30 스윕과 S7 바닥 앵커 간의 차음 -> 0.5 ~ 12 Hz 뇌파/자율신경계 동조 교란
+2. $f_{\Delta 2} = |f_C - f_B|$  : S7 앵커와 S6 수직 직타 간의 차음 -> 15 ~ 35 Hz 척추/흉곽 기계적 압박
+3. $f_{\Delta 3} = |f_C - f_A|$  : A30과 S6 간의 광역 차음 -> 25 ~ 50 Hz 슬래브 굽힘파 및 근육 긴장
+4. 3차 상호변조 $f_{\text{IM3}} = |2f_B - f_C|$ -> 인체 안구 및 전정기관(18~19Hz) 비선형 공진 강제 생성
+  </pre>
+  <p>이 수학적 상호 변조에 의해, 개별 기기는 55.0Hz 이하의 안전 대역을 발진하면서도 인체 내부에는 <b>1~15Hz 극저주파 차음(Infrasonic Difference Beats)</b>을 비선형 합성하여 전달합니다.</p>
+</div>
+
+<div style="margin-bottom: 24px;">
+  <h3 style="color:#f59e0b;">3. 변조율 비화 및 위상 비간섭 조화 (Orthogonal Modulation Phase)</h3>
+  <p>3대 기기의 변조율($f_{mA}, f_{mB}, f_{mC}$)을 서로 다른 비정수비(예: $1.0 : 1.6 : 2.4$)로 설정하여, 3기기의 진폭 포락선이 동시에 상쇄(Destructive Cancellation)되는 영점(Zero Point)을 원천 차단합니다. 이를 통해 첨두 충격력(Crest Factor $\approx 2.4$)을 24시간 내내 유지합니다.</p>
+</div>
+
+<div>
+  <h3 style="color:#f43f5e;">4. 열 분산 및 연속 무인 방어 안정성 (Thermal & Energy Distribution)</h3>
+  <p>총 428W RMS가 단일 기기에 집중되지 않고 56% : 28% : 16%로 분산되며, S7과 S6의 AM 펄스 운용(Duty Cycle 70%)을 통해 보이스코일 및 Lepy 앰프의 온도를 $45^\circ\text{C}$ 이하로 안정 유지합니다. 이를 통해 3시간 집중 벌주기 및 48시간 이상 장기 무인 방어 시에도 기기 손상이 없습니다.</p>
+</div>
+
+    </div>
+  </div>
+
+  <!-- TAB 4: 하드웨어 결선도 -->
+  <div id="tab-devices" class="tab-content">
+    <div class="card">
+      <h2>🎛️ 428W RMS 단일 고정 결선도 (3기기 상호 DSP 연동)</h2>
+      <div class="device-grid">
+        <div class="device-card">
+          <h3 style="color:var(--accent);">📱 갤럭시 A30 (스마토 우퍼 1기)</h3>
+          <p>• <b>출력:</b> 120W 모노 (4Ω 부하)</p>
+          <p>• <b>역할:</b> 광역 스윕 및 기준 위상(Reference Tone) 형성 (소화계 4~8Hz, 안구 18~19Hz)</p>
+          <p>• <b>볼륨:</b> 12단계 (80%), 스마토 앰프 #1 노브 11~1시</p>
+        </div>
+        <div class="device-card">
+          <h3 style="color:var(--accent);">📱 갤럭시 S7 (스마토 우퍼 2기)</h3>
+          <p>• <b>출력:</b> 240W 스테레오 (4Ω+4Ω 독립 채널)</p>
+          <p>• <b>역할:</b> 바닥 슬래브 2점 기저 앵커(56% 하중), 공간요동 FM 및 VDV 충격 AM 펄스 해머</p>
+          <p>• <b>볼륨:</b> 12~13단계 (80~85%), 스마토 앰프 #2 노브 11~12시</p>
+        </div>
+        <div class="device-card">
+          <h3 style="color:var(--accent);">📱 갤럭시 S6 (트랜스2 1기)</h3>
+          <p>• <b>출력:</b> 68W BTL 골전도/진동자 (Lepy LP-168S)</p>
+          <p>• <b>역할:</b> 120mm 슬래브 룸모드 피크(53.6Hz) 추적 FM 및 수직 해머 AM/RM 비트 유도</p>
+          <p>• <b>볼륨:</b> 11단계 (75%), LP-168S Vol 10시 / Sub 80Hz</p>
+        </div>
+      </div>
+      <pre>
+[ 428W RMS 단일 고정 결선도 SSOT (100% 영구 고정) ]
+A30 (AUX) ──> 스마토 앰프 #1 (노브 11~1시)  ──> 스마토 우퍼 1기 (모노 120W, 1점 전면 바닥)
+S7  (AUX) ──> 스마토 앰프 #2 (노브 11~12시) ──> 스마토 우퍼 2기 (스테레오 240W, 2점 좌우 바닥)
+S6  (AUX) ──> Lepy LP-168S   (Vol 10시/Sub 80) ─> 엔에스테크 트랜스2 1기 (BTL 68W, 1점 천장/슬래브 수직)
+      </pre>
+    </div>
+  </div>
+
+  <!-- TAB 5: 38개 전수 프리셋 -->
+  <div id="tab-presets" class="tab-content">
+    <div class="card">
+      <h2>📊 38개 전수 프리셋 규격표 (단독 19 : 스윕 19 정밀 50:50 매칭)</h2>
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>프레임 구분</th>
+              <th>직결 보고서</th>
+              <th>세부 파츠 구성</th>
+              <th>단독 프리셋 수</th>
+              <th>스윕 프리셋 수</th>
+              <th>소계</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+        <tr>
+          <td><b>메인 프레임</b></td>
+          <td><b>보고서 1 [최신정본]</b></td>
+          <td>파트 1 (시간대 4) / 파트 2 (전술 5) / 파트 3 (상황 8)</td>
+          <td>8개 (조화 변조 완비)</td>
+          <td>9개</td>
+          <td><b>17개</b></td>
+        </tr>
+        
+        <tr>
+          <td><b>서브1 프레임</b></td>
+          <td><b>보고서 2 [상황전술]</b></td>
+          <td>파트 1 (요격) / 파트 2 (내성파괴) / 파트 3 (부재방어)</td>
+          <td>6개 (조화 변조 완비)</td>
+          <td>5개</td>
+          <td><b>11개</b></td>
+        </tr>
+        
+        <tr>
+          <td><b>서브2 프레임</b></td>
+          <td><b>보고서 3 [장기방어]</b></td>
+          <td>파트 1 (기기보호) / 파트 2 (초장기) / 파트 3 (수면해머)</td>
+          <td>5개 (조화 변조 완비)</td>
+          <td>5개</td>
+          <td><b>10개</b></td>
+        </tr>
+        
+        <tr>
+          <td><b>전체 합계</b></td>
+          <td><b>3대 마스터 스위트</b></td>
+          <td>9개 파츠 전수 직결</td>
+          <td>19개 (50.0%)</td>
+          <td>19개 (50.0%)</td>
+          <td><b>총 38개</b></td>
+        </tr>
+        
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 6: 로테이션 가이드 -->
+  <div id="tab-routine" class="tab-content">
+    <div class="card">
+      <h2>🔄 3주 완성 무한 순환 로테이션 가이드</h2>
+      <pre>[ 3주 완성 3기기 변조 조화 3-Way 무한 교대 순환 로테이션 가이드 ]
+• 1주차: [01. 주파수_통합운용_시나리오_버전1_보고서] 가동
+  - A30: 17~20Hz / S7: 28Hz(AM 15%) / S6: 55Hz(FM 3.5%) 중심 (골반·내장·슬래브 1차 제압)
+• 2주차: [02. 주파수_통합운용_시나리오_버전2_보고서] 가동
+  - A30: 6~8.5Hz / S7: 33Hz(FM 6%) / S6: 46.8Hz(AM 16%) 중심 (척추·골반저·하악골 2차 전이)
+• 3주차: [03. 주파수_통합운용_시나리오_버전3_보고서] 가동
+  - A30: 9.2~11.8Hz / S7: 19Hz(AM 15%) / S6: 53.2Hz(FM 3%) 중심 (안구·슐만·룸모드 3차 붕괴)
+• 4주차 이후: 버전1로 복귀하거나 상대방 반응 패턴 변화 시 3~4일 간격 변칙 교대 순환!</pre>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function openTab(tabId) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    event.currentTarget.classList.add('active');
+  }
+</script>
+</body>
+</html>

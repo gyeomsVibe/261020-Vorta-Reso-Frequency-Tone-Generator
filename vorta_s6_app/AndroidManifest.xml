@@ -1,15 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.vorta.s6frequency"
-    android:versionCode="300"
-    android:versionName="3.0">
+    android:versionCode="450"
+    android:versionName="4.5">
 
-    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="24" />
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="33" />
+
+    <queries>
+        <package android:name="com.smato.a30frequency" />
+        <package android:name="com.vorta.freqgen" />
+        <package android:name="com.vorta.s7frequency" />
+        <package android:name="com.vorta.s6frequency" />
+    </queries>
 
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
@@ -36,12 +45,25 @@
         <service
             android:name=".S6AudioGeneratorService"
             android:exported="true"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaPlayback" />
+
+        <receiver
+            android:name=".S6BootAndVolumeReceiver"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="com.vorta.s6frequency.ACTION_ENFORCE_VOLUME" />
+                <action android:name="com.vorta.s6frequency.ACTION_SAFE_VOLUME_CHECK" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".S6AccessibilityService"
+            android:label="보르타 안전볼륨 자동확인"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
@@ -49,18 +71,6 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
-
-        <receiver
-            android:name=".S6BootAndVolumeReceiver"
-            android:exported="true"
-            android:directBootAware="true">
-            <intent-filter android:priority="1000">
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
-                <action android:name="android.intent.action.HEADSET_PLUG" />
-                <action android:name="android.media.VOLUME_CHANGED_ACTION" />
-            </intent-filter>
-        </receiver>
 
     </application>
 </manifest>

@@ -1,17 +1,45 @@
-# Local work directory and backups
+# Local work directory and agent runtime state
 .work/
+.claude/
 __pycache__/
 *.pyc
+*.pyo
+.coord/mailbox/
+.coord/presence/
+.coord/requests/
+.coord/ring/
+.coord/stall/
+.coord/usage/
+.coord/windows/
+.coord/grants/
 
-# Android and Java build artifacts
+# Android, Java, and Windows native build artifacts
+**/build/
+build/
 *.apk
+*.apk.idsig
+*.idsig
 *.dex
 *.class
+*.flata
+*.jar
+*.ap_
+*.exe
+*.keystore
+*.jks
 bin/
 obj/
-*.ap_
 
-# Logs and system files
+# Secrets, logs, temporary screenshots, and OS files
+*.pem
+*.key
+*.env
+.env*
 *.log
+*.tmp
+*.bak
+screen_*.png
+slice_*.png
+window_dump.xml
 Thumbs.db
 .DS_Store

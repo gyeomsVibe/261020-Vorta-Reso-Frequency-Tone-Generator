@@ -16,9 +16,7 @@ D8 = os.path.join(BUILD_TOOLS_DIR, "d8.bat")
 ZIPALIGN = os.path.join(BUILD_TOOLS_DIR, "zipalign.exe")
 APKSIGNER = os.path.join(BUILD_TOOLS_DIR, "apksigner.bat")
 ANDROID_JAR = os.path.join(SDK_DIR, r"platforms\android-36\android.jar")
-KEYSTORE = r"d:\D_Workspace_NB\주파수\trans2_app\debug.keystore"
-if not os.path.exists(KEYSTORE):
-    KEYSTORE = r"C:\Users\Kimyoongyeom\.android\debug.keystore"
+KEYSTORE = r"C:\Users\Kimyoongyeom\.android\debug.keystore"
 JAVAC = r"C:\Program Files\Android\Android Studio\jbr\bin\javac.exe"
 if not os.path.exists(JAVAC):
     JAVAC = r"C:\Program Files\RedHat\java-1.8.0-openjdk-1.8.0.492-1\bin\javac.exe"
@@ -35,7 +33,7 @@ custom_env["PATH"] = os.path.join(JAVA_HOME, "bin") + os.path.pathsep + custom_e
 
 def run_cmd(cmd, desc):
     print(f"[{desc}] Running: {' '.join(cmd) if isinstance(cmd, list) else cmd}")
-    res = subprocess.run(cmd, cwd=APP_DIR, shell=(True if isinstance(cmd, str) else False), env=custom_env, capture_output=True, text=True)
+    res = subprocess.run(cmd, cwd=APP_DIR, shell=(True if isinstance(cmd, str) else False), env=custom_env, capture_output=True, text=True, errors="replace")
     if res.returncode != 0:
         print(f"FAILED: {desc}\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
         sys.exit(res.returncode)
@@ -73,6 +71,7 @@ def main():
     java_files = [r_java] + [os.path.join(src_dir, f) for f in os.listdir(src_dir) if f.endswith(".java")]
     run_cmd([
         JAVAC,
+        "-encoding", "UTF-8",
         "-source", "1.8",
         "-target", "1.8",
         "-cp", ANDROID_JAR,
@@ -80,14 +79,20 @@ def main():
     ] + java_files, "javac compile")
 
     print("[5/8] Converting bytecode to classes.dex with d8...")
-    class_files = [os.path.join(CLASSES_DIR, "com", "vorta", "s7frequency", f)
-                   for f in os.listdir(os.path.join(CLASSES_DIR, "com", "vorta", "s7frequency"))
-                   if f.endswith(".class")]
+    classes_jar = os.path.join(BUILD_DIR, "classes_input.jar")
+    with zipfile.ZipFile(classes_jar, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(CLASSES_DIR):
+            for f in files:
+                if f.endswith(".class"):
+                    full_p = os.path.join(root, f)
+                    rel_p = os.path.relpath(full_p, CLASSES_DIR)
+                    zf.write(full_p, rel_p)
     run_cmd([
         D8,
         "--min-api", "21",
-        "--output", BUILD_DIR
-    ] + class_files, "D8 dex conversion")
+        "--output", BUILD_DIR,
+        classes_jar
+    ], "D8 dex conversion")
 
     print("[6/8] Packaging classes.dex into base APK...")
     dex_file = os.path.join(BUILD_DIR, "classes.dex")
@@ -108,30 +113,11 @@ def main():
     run_cmd([APKSIGNER, "verify", final_apk], "apksigner verify")
     print(f"[SUCCESS] Built and signed: {final_apk}")
 
-    # Check if device is connected
-    adb_devs = subprocess.run([ADB, "devices"], capture_output=True, text=True).stdout
-    if DEVICE_SERIAL in adb_devs:
-        print(f"[8/8] Installing onto Galaxy S7 ({DEVICE_SERIAL})...")
-        run_cmd([ADB, "-s", DEVICE_SERIAL, "install", "-r", final_apk], "ADB install")
-
-        print("Granting WRITE_SECURE_SETTINGS to S7 app...")
-        run_cmd([ADB, "-s", DEVICE_SERIAL, "shell", "pm", "grant", "com.vorta.s7frequency", "android.permission.WRITE_SECURE_SETTINGS"], "Grant permission")
-
-        print("Launching Vorta Reso S7 v2.8...")
-        run_cmd([ADB, "-s", DEVICE_SERIAL, "shell", "am", "start", "-n", "com.vorta.s7frequency/.MainActivity"], "ADB launch")
-
-        print("Configuring system safe volume unlock (free manual volume control)...")
-        run_cmd([ADB, "-s", DEVICE_SERIAL, "shell", "settings", "put", "system", "volume_limiter_enable", "0"], "Disable vol limiter")
-        run_cmd([ADB, "-s", DEVICE_SERIAL, "shell", "settings", "put", "system", "volume_limiter_value", "15"], "Set limiter max 15")
-        run_cmd([ADB, "-s", DEVICE_SERIAL, "shell", "settings", "put", "global", "audio_safe_volume_state", "2"], "Safe volume state 2")
-        run_cmd([ADB, "-s", DEVICE_SERIAL, "shell", "settings", "put", "global", "safe_media_volume_active", "0"], "Safe media vol 0")
-    else:
-        print(f"[INFO] Galaxy S7 ({DEVICE_SERIAL}) not connected via USB. APK ready at: {final_apk}")
-
     # Copy final APK to app root for easy transfer
     root_apk = os.path.join(APP_DIR, "vorta_s7_pro.apk")
     shutil.copy2(final_apk, root_apk)
     print(f"[READY] Copied final APK to: {root_apk}")
+
 
 if __name__ == "__main__":
     main()

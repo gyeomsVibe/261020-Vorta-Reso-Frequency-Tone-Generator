@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0E0F11" />
+    <title>보르타 이지스</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/icon.svg" />
+    <link rel="icon" type="image/x-icon" href="/assets/vorta_aegis.ico" />
+    <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="app-shell">
+    <header class="editorial-header">
+        <div class="header-top">
+            <div>
+                <div class="eyebrow">VORTA AEGIS · v2.3 PC</div>
+                <h1 class="app-title">보르타 이지스</h1>
+                <p id="hwSubline" class="hw-subline">Windows WASAPI · 48.0kHz Stereo · -1.0 dBTP</p>
+            </div>
+            <button id="btnUltrasonicGuard" class="guard-chip hidden" type="button" title="이어폰/헤드폰 청력 보호를 위해 16kHz 이상 초음파 출력을 -12dB 감쇄합니다">
+                초음파 보호 -12dB ON
+            </button>
+        </div>
+    </header>
+
+    <main class="workspace-grid">
+        <section class="console-column">
+            <div class="console-card">
+                <div id="consoleJumpArea" class="console-jump-area" role="button" tabindex="0" aria-label="재생 중인 프리셋으로 이동">
+                    <div class="status-row">
+                        <span id="statusLed" class="led led-stopped" aria-hidden="true"></span>
+                        <span id="statusText" class="status-text">대기 중</span>
+                        <span class="engine-tag">음악 동시재생</span>
+                    </div>
+
+                    <div class="hero-row">
+                        <div id="heroFreq" class="hero-freq idle">0.00 Hz</div>
+                        <span id="heroSubBadge" class="hero-sub-badge hidden"></span>
+                    </div>
+
+                    <div class="title-row">
+                        <div id="scenarioTitle" class="scenario-title">프리셋을 선택하면 즉시 재생됩니다</div>
+                        <button id="jumpCueBtn" class="jump-cue hidden" type="button">재생 탭 ›</button>
+                    </div>
+                </div>
+
+                <div id="mechanismInfo" class="mechanism-info">• 위상 연속 정현파 무왜곡 출력 대기
+• 유튜브·스포티파이·멜론 등 음악 앱과 끊김 없이 동시 재생됩니다</div>
+
+                <div class="divider"></div>
+
+                <div class="volume-block">
+                    <div class="vol-header">
+                        <span class="vol-label">독립 출력 볼륨</span>
+                        <span id="volumeReadout" class="vol-readout">45% · -26.4 dB</span>
+                        <span class="sys-vol-tag">WASAPI 공유 믹스</span>
+                    </div>
+
+                    <div class="fader-row">
+                        <button id="btnMute" class="icon-btn" type="button" aria-label="음소거 전환 (M)" title="음소거 전환 (M)">
+                            <svg id="iconVolOn" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                                <path d="M4,9V15H8L13,19V5L8,9H4Z" fill="currentColor" />
+                                <path d="M16.5,8.5C17.8,9.8 17.8,14.2 16.5,15.5" stroke="#E5A93C" stroke-width="1.8" stroke-linecap="round" fill="none" />
+                                <path d="M19.2,6.2C21.5,9.0 21.5,15.0 19.2,17.8" stroke="#E5A93C" stroke-width="1.8" stroke-linecap="round" fill="none" />
+                            </svg>
+                            <svg id="iconVolMute" class="hidden" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                                <path d="M4,9V15H8L13,19V5L8,9H4Z" fill="#9A9FA8" />
+                                <path d="M16.5,9.5L21,14.5M21,9.5L16.5,14.5" stroke="#FF3B5C" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                        </button>
+                        <button id="btnMinus" class="stepper-btn" type="button" aria-label="볼륨 5% 감소">−</button>
+                        <input id="seekVolume" class="volume-slider" type="range" min="0" max="100" value="45" aria-label="독립 출력 볼륨 슬라이더" />
+                        <button id="btnPlus" class="stepper-btn" type="button" aria-label="볼륨 5% 증가">+</button>
+                    </div>
+
+                    <div id="detentRow" class="detent-row"></div>
+                </div>
+
+                <button id="btnStop" class="stop-btn idle" type="button" disabled>대기 중 (프리셋 선택 시 재생)</button>
+            </div>
+
+            <p class="footer-notice">
+                유튜브·스포티파이·멜론 등과 동시 재생 지원 · 독립 볼륨으로 음악에 안 묻히게 조절 · -1.0 dBTP 무왜곡 헤드룸 · 단축키 Space(재생/중지) · M(음소거) · 1~8(탭)
+            </p>
+        </section>
+
+        <section class="catalog-column">
+            <div id="tabScroll" class="tab-scroll" role="tablist" aria-label="주파수 카테고리"></div>
+            <div id="presetList" class="preset-list"></div>
+        </section>
+    </main>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
