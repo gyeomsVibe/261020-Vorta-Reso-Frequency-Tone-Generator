@@ -3137,6 +3137,11 @@ namespace VortaAegisPC
             {
                 mSearchBox.Text = "";
             }
+            if (IsNonCorePackFilterActive() && persistIfIdle)
+            {
+                mCtrl.SetPackFilter("");
+                RefreshPackFilterChipStyle();
+            }
             RefreshTabStyles();
             RenderPresetCards();
             UpdateJumpCue();
@@ -3888,6 +3893,24 @@ namespace VortaAegisPC
             return string.Equals(preset.PackId, fid, StringComparison.OrdinalIgnoreCase);
         }
 
+        private bool IsNonCorePackFilterActive()
+        {
+            string fid = mCtrl.State.PackFilterId ?? "";
+            if (string.IsNullOrEmpty(fid)) return false;
+            IList<PresetPackInfo> packs = mCtrl.PackInfos;
+            if (packs != null)
+            {
+                for (int i = 0; i < packs.Count; i++)
+                {
+                    if (string.Equals(packs[i].PackId, fid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return !packs[i].IsCore;
+                    }
+                }
+            }
+            return false;
+        }
+
         private void RefreshTabStyles()
         {
             int[] tabCounts = new int[TabSyncPolicy.TAB_COUNT];
@@ -3904,7 +3927,7 @@ namespace VortaAegisPC
 
             for (int i = 0; i < mTabChips.Count; i++)
             {
-                bool isSel = (i == mSelectedTab) && string.IsNullOrEmpty(mSearchQuery) && !mFavoritesOnly;
+                bool isSel = (i == mSelectedTab) && string.IsNullOrEmpty(mSearchQuery) && !mFavoritesOnly && !IsNonCorePackFilterActive();
                 bool isOwner = (i == playingTab);
 
                 StackPanel content = new StackPanel();
@@ -3983,7 +4006,7 @@ namespace VortaAegisPC
                         || TabSyncPolicy.TAB_SHORT_NAMES[preset.TabIndex].Contains(mSearchQuery);
                     if (!hit) continue;
                 }
-                else if (!mFavoritesOnly && preset.TabIndex != mSelectedTab)
+                else if (!mFavoritesOnly && !IsNonCorePackFilterActive() && preset.TabIndex != mSelectedTab)
                 {
                     continue;
                 }
