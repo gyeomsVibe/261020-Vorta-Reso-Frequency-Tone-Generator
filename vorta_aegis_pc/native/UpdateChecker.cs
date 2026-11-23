@@ -65,6 +65,17 @@ namespace VortaAegisPC
             return ComparePreRelease(preA, preB);
         }
 
+        private static bool IsAsciiDigitsOnly(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c < '0' || c > '9') return false;
+            }
+            return true;
+        }
+
         private static int ComparePreRelease(string preA, string preB)
         {
             string[] idsA = preA.Split('.');
@@ -74,10 +85,10 @@ namespace VortaAegisPC
             {
                 if (i >= idsA.Length) return -1;
                 if (i >= idsB.Length) return 1;
-                int na;
-                int nb;
-                bool isNumA = int.TryParse(idsA[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out na);
-                bool isNumB = int.TryParse(idsB[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out nb);
+                ulong na = 0;
+                ulong nb = 0;
+                bool isNumA = IsAsciiDigitsOnly(idsA[i]) && ulong.TryParse(idsA[i], NumberStyles.None, CultureInfo.InvariantCulture, out na);
+                bool isNumB = IsAsciiDigitsOnly(idsB[i]) && ulong.TryParse(idsB[i], NumberStyles.None, CultureInfo.InvariantCulture, out nb);
                 if (isNumA && isNumB)
                 {
                     if (na < nb) return -1;
@@ -85,7 +96,7 @@ namespace VortaAegisPC
                 }
                 else if (isNumA != isNumB)
                 {
-                    return isNumA ? -1 : 1; // Numeric identifiers always have lower precedence than non-numeric
+                    return isNumA ? -1 : 1; // SemVer 2.0 Sec 11: Numeric identifiers always have lower precedence than non-numeric
                 }
                 else
                 {
@@ -142,20 +153,28 @@ namespace VortaAegisPC
 
         private static string HttpGetText(string url)
         {
+            bool tlsConfigured = false;
             try
             {
-                // Enforce TLS 1.2+ only (disable deprecated TLS 1.0 / 1.1)
+                // Enforce TLS 1.2 + TLS 1.3 only (no TLS 1.0 / 1.1)
                 ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | (SecurityProtocolType)12288;
+                tlsConfigured = true;
             }
             catch
             {
                 try
                 {
                     ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                    tlsConfigured = true;
                 }
                 catch
                 {
+                    tlsConfigured = false;
                 }
+            }
+            if (!tlsConfigured)
+            {
+                throw new NotSupportedException("TLS 1.2+ protocol is required for update checks.");
             }
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = "GET";

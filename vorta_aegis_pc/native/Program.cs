@@ -1224,6 +1224,8 @@ namespace VortaAegisPC
             Assert(UpdateChecker.CompareSemVer("3.10.0", "3.2.9") > 0, "SemVer numeric comparison");
             Assert(UpdateChecker.CompareSemVer("3.2.0-rc1", "3.2.0") < 0, "SemVer pre-release lower than release");
             Assert(UpdateChecker.CompareSemVer("3.2.0-beta.2", "3.2.0-beta.10") < 0, "SemVer pre-release numeric precedence");
+            Assert(UpdateChecker.CompareSemVer("1.0.0--1", "1.0.0-0") > 0, "SemVer non-digit identifier higher than numeric 0");
+            Assert(UpdateChecker.CompareSemVer("1.0.0-alpha", "1.0.0-1") > 0, "SemVer alpha higher than numeric");
             Assert(ThemePalette.CreateDarkSliderStyle() != null, "DarkSliderStyle parses");
             Assert(ThemePalette.CreateDarkComboStyle() != null, "DarkComboStyle parses");
             Assert(ThemePalette.CreateDarkScrollBarStyle() != null, "DarkScrollBarStyle parses");
@@ -1232,6 +1234,24 @@ namespace VortaAegisPC
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "PASS: {0}/0 native checks verified ({1})", sSelfPassed, probeInfo));
             return 0;
+        }
+
+        private static double CatmullRomMax(double p0, double p1, double p2, double p3)
+        {
+            double maxTp = 0.0;
+            for (int sub = 1; sub <= 3; sub++)
+            {
+                double t = sub * 0.25;
+                double t2 = t * t;
+                double t3 = t2 * t;
+                double interp = 0.5 * ((2.0 * p1)
+                    + (-p0 + p2) * t
+                    + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+                    + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+                double abs = Math.Abs(interp);
+                if (abs > maxTp) maxTp = abs;
+            }
+            return maxTp;
         }
 
         private static double VerifyZeroOvershootAt120(PcOutputProfile profile, PresetItem preset, bool guard, bool checkCubicTruePeak)
@@ -1246,6 +1266,7 @@ namespace VortaAegisPC
             float[] buf = new float[BLK * 2];
             double sumSq = 0.0;
             double maxAbs = 0.0;
+            // Seed pre-roll s[-1] = 0.0 (silence before start) so every interval [s0..s1]..[s_{N-2}..s_{N-1}] has full 4-tap support
             double pL0 = 0.0, pL1 = 0.0, pL2 = 0.0, pL3 = 0.0;
             double pR0 = 0.0, pR1 = 0.0, pR2 = 0.0, pR3 = 0.0;
             double maxTp = 0.0;
@@ -1271,34 +1292,32 @@ namespace VortaAegisPC
                         pL0 = pL1; pL1 = pL2; pL2 = pL3; pL3 = l;
                         pR0 = pR1; pR1 = pR2; pR2 = pR3; pR3 = r;
                         totalFrames++;
-                        if (totalFrames >= 4)
+                        // Starts evaluating [s0..s1] once s2 is pushed (totalFrames >= 3) since pL0=0 pre-roll at frame 3
+                        if (totalFrames >= 3)
                         {
-                            for (int sub = 1; sub <= 3; sub++)
-                            {
-                                double t = sub * 0.25;
-                                double t2 = t * t;
-                                double t3 = t2 * t;
-                                double iL = 0.5 * ((2.0 * pL1)
-                                    + (-pL0 + pL2) * t
-                                    + (2.0 * pL0 - 5.0 * pL1 + 4.0 * pL2 - pL3) * t2
-                                    + (-pL0 + 3.0 * pL1 - 3.0 * pL2 + pL3) * t3);
-                                double iR = 0.5 * ((2.0 * pR1)
-                                    + (-pR0 + pR2) * t
-                                    + (2.0 * pR0 - 5.0 * pR1 + 4.0 * pR2 - pR3) * t2
-                                    + (-pR0 + 3.0 * pR1 - 3.0 * pR2 + pR3) * t3);
-                                double tp = Math.Max(Math.Abs(iL), Math.Abs(iR));
-                                if (tp > maxTp) maxTp = tp;
-                            }
+                            double tp = Math.Max(CatmullRomMax(pL0, pL1, pL2, pL3), CatmullRomMax(pR0, pR1, pR2, pR3));
+                            if (tp > maxTp) maxTp = tp;
                         }
                     }
                 }
+            }
+
+            if (checkCubicTruePeak)
+            {
+                // Render 1 lookahead sample s[N] so final interval [s_{N-2}..s_{N-1}] also has full 4-tap Catmull-Rom support
+                float[] tail = new float[2];
+                eng.RenderStereoFloat(tail, 1);
+                pL0 = pL1; pL1 = pL2; pL2 = pL3; pL3 = tail[0];
+                pR0 = pR1; pR1 = pR2; pR2 = pR3; pR3 = tail[1];
+                double tailTp = Math.Max(CatmullRomMax(pL0, pL1, pL2, pL3), CatmullRomMax(pR0, pR1, pR2, pR3));
+                if (tailTp > maxTp) maxTp = tailTp;
             }
 
             Assert(eng.OvershootCount == 0, "Zero overshoot (no hard clamp) preset=" + preset.Id + " profile=" + profile);
             Assert(maxAbs <= AegisDspEngine.CLEAN_BOOST_CEILING + 1e-6, "Sample peak L/R <= -0.50 dBTP preset=" + preset.Id);
             if (checkCubicTruePeak)
             {
-                Assert(maxTp <= AegisDspEngine.CLEAN_BOOST_CEILING + 5e-4, "Full-duration L+R 4x True-peak <= -0.50 dBTP preset=" + preset.Id);
+                Assert(maxTp <= AegisDspEngine.CLEAN_BOOST_CEILING + 5e-4, "Full-duration L+R 4x True-peak (all intervals) <= -0.50 dBTP preset=" + preset.Id);
             }
             return Math.Sqrt(sumSq / (110 * BLK * 2));
         }
