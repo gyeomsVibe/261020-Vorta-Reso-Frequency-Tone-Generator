@@ -6,67 +6,66 @@
 > - **Vorta (보르타)**: Vortex(파동 에너지) + Volta(정밀 주파수 전위)의 합성어로, 흩어진 환경음과 작업 리듬을 정밀한 음향 파동으로 정렬하는 독자 브랜드입니다.
 > - **Aegis (이지스)**: 수호 방패를 뜻하며, 동영상·작업·AI 툴과 충돌 없이 곁을 지키는 초경량 백그라운드 음향 방패입니다.
 
+![Vorta Aegis PC v3.2 와이드 스튜디오](01-beginner-guide/assets/vorta_pc_v32_wide_studio.png)
+
 ---
 
-## 1. 구성 프로젝트 (7종 앱 & 도구)
+## 🧭 저장소 6대 디렉터리 안내
 
-| 폴더 | 대상 / 플랫폼 | 핵심 기능 및 상태 |
+이 저장소는 **Diátaxis(디아탁시스) 국제 기술문서 표준**에 맞춰 누구나 직관적으로 관련 내용을 추론할 수 있도록 6개 핵심 폴더로 체계화되어 있습니다.
+
+| 번호 / 폴더명 | 용도 및 핵심 내용 | 바로가기 |
 |---|---|---|
-| `vorta_unified_app/` | Galaxy A30·S7·S6 공용 (`v5.2`) | **Pro 순수 변조(FM/AM/RM) 3채널 + 168+12 시나리오·실시간 4096 링버퍼 파동 스코프** (`s6_api24` / `s7_api26` / `a30_api30`) |
-| `vorta_aegis_pc/` | **Windows 10/11 PC (`v3.2.0`)** | **네이티브 x64 WASAPI · 코어 48 + PC Pro 팩 16(64종)·이중링/히스테리시스 오실로스코프·좌우 `GridSplitter`·120% 무클리핑 증폭·업데이트/라이선스 허브** |
-| `vorta_aegis_app/` | Android 메인폰 (Note 20 Ultra 등 `v2.3`) | **48종 안티방어·수면·집중·명상·모기퇴치 프리셋·음악 동시재생(Duck/Blend)·독립 볼륨** |
-| `vorta_freqgen_app/` | 공용 다기능 정밀 발생기 | 스윕·바이노럴·복합 변조 독립 발생기 |
-| `smato_a30_app/` | Galaxy A30 (`SM-A305N`) | 스마토 우퍼 #1 전용 앱 (`build_a30.py`) |
-| `vorta_s7_app/` | Galaxy S7 (`SM-G930K`) | 스마토 우퍼 #2 전용 앱 (`build_s7.py`) |
-| `vorta_s6_app/` | Galaxy S6 (`SM-G920K`) | Lepy LP-168S / 트랜스2 전용 앱 (`build_s6.py`) |
+| **`01-beginner-guide/`** | **입문자 완전 가이드**: 프로젝트 소개, v3.0→v3.2 전체 진단/해결 과정(7대 사례), PC 앱 실전 매뉴얼, ELI10 용어사전, 실제 화면 캡처 | [안내서 읽기](01-beginner-guide/README.md) |
+| **`02-apps/`** | **7대 현역 앱 소스코드**: Windows PC v3.2.0 네이티브 WASAPI 스튜디오, Android 메인 이지스(Note 20), 통합앱(A30/S7/S6), 전용기기 앱 소스 | [앱 목록 보기](02-apps/README.md) |
+| **`03-scenarios/`** | **현행 주파수 운용 시나리오**: 시간대·상황·전술별 주파수 시나리오 정본 (00~05) | [시나리오 보기](03-scenarios/README.md) |
+| **`04-docs/`** | **설계서 및 공학 보고서**: UI/DSP 아키텍처 설계서, 상용화 라이선스 및 CROS/KIPRIS 정식인증 가이드, 기기별 분석 보고서 | [문서 허브](04-docs/README.md) |
+| **`05-scripts/`** | **원클릭 배치 및 자동화 도구**: 원클릭 설치 배치파일(.bat), 디바이스 튜닝 쉘(.ps1/.sh), 빌드 및 파라미터 감사 파이썬(.py) | [스크립트 목록](05-scripts/README.md) |
+| **`06-archive/`** | **연구 원문 및 과거 보고서 보관함**: 초기 연구 문서(.docx/.pdf), 구버전 시나리오 보고서, 참고 스크린샷 아카이브 | [아카이브 탐색](06-archive/README.md) |
 
 ---
 
-## 2. 빠른 시작 (빌드 및 설치)
+## ⚡ 빠른 시작 (Windows PC v3.2.0 네이티브 앱)
 
-> 바이너리(`.apk`, `.exe`)와 서명 키(`.keystore`)는 보안·용량 정책상 저장소에 포함되지 않습니다.
+Windows 10/11(`.NET Framework 4.8` 기본 내장) 환경에서 별도 무거운 외부 툴 없이 Python 3만 있으면 1초 만에 네이티브 x64 실행 파일을 빌드하고 바탕화면 바로가기를 만듭니다.
 
-### A. Windows PC 네이티브 앱 (`vorta_aegis_pc/` v3.2.0 PC)
-Windows 10/11(`.NET Framework 4.8` 기본 내장) + Python 3 환경에서 별도 외부 SDK 없이 1초 만에 네이티브 x64 실행 파일을 빌드하고 바탕화면·시작메뉴 바로가기를 생성합니다.
 ```powershell
-python vorta_aegis_pc/install_pc.py
+git clone https://github.com/gyeomsVibe/261020-Vorta-Reso-Frequency-Tone-Generator.git
+cd 261020-Vorta-Reso-Frequency-Tone-Generator
+python 02-apps/pc-windows-vorta-aegis/install_pc.py
 ```
-- **창 닫기(`×`)**: 재생을 멈추지 않고 트레이 백그라운드(`~5.3 MB`)로 전환
-- **모듈형 시나리오 팩**: `web/presets.json`(코어 48종) + `packs/*.json`(PC Pro 16종) + `%LOCALAPPDATA%\VortaAegis\packs\*.json` 핫로드
-- **PC 음향 보정 & 스코프**: `PC 스피커 보정`(144Hz 반송/배음) · `이어폰·헤드폰`(`-12dB` 초음파 가드) · `순수 원음·DAC` · `기본 파동 | 실출력 보기` 전환
-- **청정 증폭**: `100% (0.0 dB)` ~ `120% (+1.6 dB)` `-0.50 dBTP` 선형 헤드룸 (`OvershootCount == 0`, `THD+N < 0.1%`)
 
-### B. Android 통합앱 / 전용 기기 일괄 환경설정
-1. 폰 **개발자 옵션 → USB 디버깅** 활성화 후 PC 연결
-2. 원클릭 배치 실행:
-   - 통합앱 설치: `보르타_통합앱_OS버전별_설치_원클릭.bat`
-   - 전용 기기 최적화 + 앱 설치: `A30_S7_S6_보르타_레조_환경설정_원클릭.bat` 또는 `A30_S7_S6_주파수발생기_전수개조_원클릭.bat`
+### v3.2.0 PC 주요 기능
+- **초저주파 정밀 스코프**: 32x 저역 데시메이션(1500 Hz 링버퍼) + 히스테리시스 영점 트리거로 `7.00 Hz` 도 매끄러운 3주기 정현파로 표시 (`기본 파동 | 실출력 보기` 토글 지원)
+- **자유 리사이즈 & GridSplitter**: 창 크기 자유 조절(`400x540`~최대화) 및 좌우 패널 폭 수동/자동 기억 조절
+- **120% 클린 증폭**: 6단 볼륨 디텐트(`15/30/50/80/100/120%`) + `-0.50 dBTP` 선형 리미터로 찌그러짐 없는 깨끗한 증폭 (`THD+N < 0.1%`)
+- **모듈형 확장 팩**: 코어 48종 패리티 유지 + PC Pro 상용 팩 16종 (`총 64종`) 기본 탑재 및 외부 JSON 팩 핫로딩
+- **미니바 전체 복원 지원**: 미니바 우측 `[전체]` 버튼 및 상단 정보 영역 더블클릭으로 전체 패널 즉시 복원
 
----
-
-## 3. 문서·시나리오·라이선스 안내
-
-| 경로 | 내용 |
-|---|---|
-| `docs/보르타_이지스_비판감사_및_비AI_상용화_디자인_설계서.md` | 보르타 이지스(Android v2.3 & PC v3.2) 디자인·DSP·스코프 설계 정본 |
-| `docs/보르타_상용화_라이선스_및_정식인증_가이드.md` | **저작권·상표(CROS/KIPRIS)·Windows 코드 서명·결제/정품키 취득 가이드** |
-| `docs/보르타_레조_앱_UIUX_음향제어_영구불변원칙.md` | 보르타 레조 계열 영구 불변 음향·안전 원칙 |
-| `docs/Result/`, `docs/작업기록/` | 통합 운용 체계 마스터 보고서 및 기기별 작업 로그 |
-| `시나리오/`, `구버전 시나리오/` | 시간대·상황·전술별 주파수 시나리오 보고서 일체 |
-| `.coord/PLAN.md`, `.coord/results/` | UAOS 프로젝트 진행 계획 및 검증 카드 결과서 |
+![Vorta Aegis PC v3.2 7Hz 파동 스코프](01-beginner-guide/assets/vorta_pc_v32_tall_7hz_scope.png)
 
 ---
 
-## 4. 주의사항
+## 📱 Android 기기 일괄 설정 및 통합앱 배포
 
-- 이 소프트웨어 모음은 **의료기기가 아닙니다.** 질병의 진단·치료·예방 효과를 주장하지 않습니다.
-- 우퍼·앰프 장시간 구동 시 발열, 전원, 유선 연결 상태를 주기적으로 점검하세요.
+1. Android 스마트폰 **개발자 옵션 → USB 디버깅** 활성화 후 PC에 연결
+2. `05-scripts/one-click-bat/` 내 원클릭 배치 스크립트 실행:
+   - 통합앱 설치: `05-scripts/one-click-bat/보르타_통합앱_OS버전별_설치_원클릭.bat`
+   - 전용 기기 최적화: `05-scripts/one-click-bat/A30_S7_S6_보르타_레조_환경설정_원클릭.bat`
 
 ---
 
-## 5. 라이선스 및 권리 고지
+## ⚠️ 주의사항
 
-**All Rights Reserved (모든 권리 보유).** 오픈소스가 아닙니다. 비영리 개인 평가 열람 외 저작권자의 명시적 서면 허락 또는 상용 라이선스 없는 복제·수정·배포·상업적 이용을 금합니다. 외부 GPL/LGPL 의존성은 **0건**입니다.  
-세부 조항: [LICENSE](LICENSE) · [NOTICE](NOTICE) · [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) · [SECURITY.md](SECURITY.md)
+- 본 소프트웨어 모음은 **의료기기가 아닙니다.** 질병의 진단·치료·예방 효과를 주장하지 않으며 집중·휴식·환경음 완화 보조 유틸리티로 설계되었습니다.
+- 우퍼 및 앰프 장시간 구동 시 발열, 전원, 연결 상태를 주기적으로 확인하세요.
+
+---
+
+## 📜 라이선스 및 법적 고지
+
+**All Rights Reserved (모든 권리 보유).** 오픈소스가 아니며, 비영리 개인 평가 열람 목적 외 저작권자의 명시적 서면 허가 없는 무단 복제, 상업적 재배포를 금합니다. 외부 GPL/LGPL 의존성은 **0건**입니다.
+- 세부 라이선스 전문: [LICENSE](LICENSE) · [NOTICE](NOTICE) · [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) · [SECURITY.md](SECURITY.md)
+- 정식 라이선스 인증 가이드: [04-docs/02-commercial-licensing/보르타_상용화_라이선스_및_정식인증_가이드.md](04-docs/02-commercial-licensing/보르타_상용화_라이선스_및_정식인증_가이드.md)
 
 문의: yoongyeomkim@naver.com · GitHub [@gyeomsVibe](https://github.com/gyeomsVibe)

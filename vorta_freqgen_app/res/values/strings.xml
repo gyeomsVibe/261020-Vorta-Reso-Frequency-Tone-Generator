@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">보르타 주파수 발생기 Pro</string>
-    <string name="accessibility_service_label">보르타 주파수 발생기 접근성 서비스</string>
-    <string name="accessibility_service_description">주파수 발생기 백그라운드 발진 및 오디오 안정성 보호 서비스</string>
-</resources>
