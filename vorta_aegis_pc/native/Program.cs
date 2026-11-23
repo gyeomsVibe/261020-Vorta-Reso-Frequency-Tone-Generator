@@ -1035,6 +1035,64 @@ namespace VortaAegisPC
             sSelfPassed++;
         }
 
+        private sealed class MiniBarTestController : IAppHostController
+        {
+            private readonly IList<PresetItem> mPresets;
+            private readonly IList<PresetPackInfo> mPacks;
+            private readonly AegisDspEngine mDsp;
+            private readonly AppStateData mState;
+
+            public int SwitchToFullCount;
+            public bool LastMiniFlag = true;
+            public bool AllowExitFlag;
+
+            public MiniBarTestController(IList<PresetItem> presets)
+            {
+                mPresets = presets ?? new List<PresetItem>();
+                mPacks = new List<PresetPackInfo>();
+                mDsp = new AegisDspEngine(48000);
+                mState = new AppStateData();
+            }
+
+            public IList<PresetItem> Presets { get { return mPresets; } }
+            public IList<PresetPackInfo> PackInfos { get { return mPacks; } }
+            public string UserPacksDir { get { return ""; } }
+            public int SkippedPackCount { get { return 0; } }
+            public AegisDspEngine Dsp { get { return mDsp; } }
+            public WasapiAudioEngine Audio { get { return null; } }
+            public AppStateData State { get { return mState; } }
+            public bool AllowExit { get { return AllowExitFlag; } }
+            public int SleepTimerRemainingSeconds { get { return 0; } }
+            public int SleepTimerPresetMinutes { get { return 0; } }
+            public long PlaybackElapsedSeconds { get { return 0; } }
+            public string ActiveEndpointDisplayName { get { return "Test"; } }
+
+            public void PlayPreset(PresetItem preset) { }
+            public void PlayAdjacentPreset(int delta) { }
+            public void StopPlayback() { }
+            public void ApplyVolume(int percent, bool muted) { }
+            public void ApplyOutputProfile(PcOutputProfile profile) { }
+            public void ApplyDevice(string deviceId) { }
+            public void ApplyUltrasonicGuard(bool enabled) { }
+            public void SetScopeShowComposite(bool showComposite) { }
+            public void SetPackFilter(string packId) { }
+            public void ReloadPacks() { }
+            public void OpenPacksFolder() { }
+            public void ShowAboutDialog() { }
+            public void OpenDocumentationFile(string kind) { }
+            public void SaveLastTab(int tabIndex) { }
+            public void SwitchToMiniMode(bool mini)
+            {
+                LastMiniFlag = mini;
+                if (!mini) SwitchToFullCount++;
+            }
+            public void HideToTray() { }
+            public void ShutdownCompletely() { }
+            public bool IsFavorite(int presetId) { return false; }
+            public void ToggleFavorite(int presetId) { }
+            public void SetSleepTimerMinutes(int minutes) { }
+        }
+
         private static int RunSelfTest(string baseDir)
         {
             sSelfPassed = 0;
@@ -1223,10 +1281,42 @@ namespace VortaAegisPC
             Assert(UpdateChecker.CompareSemVer("3.2.0-beta.2", "3.2.0-beta.10") < 0, "SemVer pre-release numeric precedence");
             Assert(UpdateChecker.CompareSemVer("1.0.0--1", "1.0.0-0") > 0, "SemVer non-digit identifier higher than numeric 0");
             Assert(UpdateChecker.CompareSemVer("1.0.0-alpha", "1.0.0-1") > 0, "SemVer alpha higher than numeric");
+            Assert(UpdateChecker.CompareSemVer("1.0.0-100000000000000000000", "1.0.0-99999999999999999999") > 0, "SemVer arbitrary-length integer pre-release comparison");
+            Assert(UpdateChecker.CompareSemVer("1.0.0-99999999999999999999", "1.0.0-100000000000000000000") < 0, "SemVer arbitrary-length integer pre-release reverse comparison");
             Assert(ThemePalette.CreateDarkSliderStyle() != null, "DarkSliderStyle parses");
             Assert(ThemePalette.CreateDarkComboStyle() != null, "DarkComboStyle parses");
             Assert(ThemePalette.CreateDarkScrollBarStyle() != null, "DarkScrollBarStyle parses");
             Assert(ThemePalette.CreateDarkSplitterStyle() != null, "DarkSplitterStyle parses");
+
+            // 11. MiniBarWindow "전체" restore regression check (MouseLeftButtonDown must stop before DragMove)
+            MiniBarTestController miniStub = new MiniBarTestController(all);
+            MiniBarWindow miniWin = new MiniBarWindow(miniStub);
+            try
+            {
+                Assert(miniWin.RestoreFullButton != null, "MiniBar RestoreFullButton exposed");
+                System.Windows.Input.MouseButtonEventArgs downArgs = new System.Windows.Input.MouseButtonEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    System.Windows.Input.MouseButton.Left);
+                downArgs.RoutedEvent = UIElement.MouseLeftButtonDownEvent;
+                miniWin.RestoreFullButton.RaiseEvent(downArgs);
+                Assert(downArgs.Handled, "MiniBar RestoreFullButton marks MouseLeftButtonDown handled before DragMove");
+
+                System.Windows.Input.MouseButtonEventArgs upArgs = new System.Windows.Input.MouseButtonEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice,
+                    Environment.TickCount,
+                    System.Windows.Input.MouseButton.Left);
+                upArgs.RoutedEvent = UIElement.MouseLeftButtonUpEvent;
+                miniWin.RestoreFullButton.RaiseEvent(upArgs);
+                Assert(upArgs.Handled, "MiniBar RestoreFullButton marks MouseLeftButtonUp handled");
+                Assert(miniStub.SwitchToFullCount == 1, "MiniBar 전체 button switches back to full panel");
+                Assert(!miniStub.LastMiniFlag, "MiniBar 전체 button passes mini=false");
+            }
+            finally
+            {
+                miniStub.AllowExitFlag = true;
+                miniWin.Close();
+            }
 
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "PASS: {0}/0 native checks verified ({1})", sSelfPassed, probeInfo));

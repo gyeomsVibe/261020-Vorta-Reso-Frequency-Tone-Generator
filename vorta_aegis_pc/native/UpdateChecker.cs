@@ -76,6 +76,15 @@ namespace VortaAegisPC
             return true;
         }
 
+        private static int CompareAsciiUnsignedInt(string a, string b)
+        {
+            string sa = (a ?? "").TrimStart('0');
+            string sb = (b ?? "").TrimStart('0');
+            if (sa.Length < sb.Length) return -1;
+            if (sa.Length > sb.Length) return 1;
+            return string.CompareOrdinal(sa, sb);
+        }
+
         private static int ComparePreRelease(string preA, string preB)
         {
             string[] idsA = preA.Split('.');
@@ -85,14 +94,12 @@ namespace VortaAegisPC
             {
                 if (i >= idsA.Length) return -1;
                 if (i >= idsB.Length) return 1;
-                ulong na = 0;
-                ulong nb = 0;
-                bool isNumA = IsAsciiDigitsOnly(idsA[i]) && ulong.TryParse(idsA[i], NumberStyles.None, CultureInfo.InvariantCulture, out na);
-                bool isNumB = IsAsciiDigitsOnly(idsB[i]) && ulong.TryParse(idsB[i], NumberStyles.None, CultureInfo.InvariantCulture, out nb);
+                bool isNumA = IsAsciiDigitsOnly(idsA[i]);
+                bool isNumB = IsAsciiDigitsOnly(idsB[i]);
                 if (isNumA && isNumB)
                 {
-                    if (na < nb) return -1;
-                    if (na > nb) return 1;
+                    int c = CompareAsciiUnsignedInt(idsA[i], idsB[i]);
+                    if (c != 0) return c;
                 }
                 else if (isNumA != isNumB)
                 {

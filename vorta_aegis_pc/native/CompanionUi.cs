@@ -4391,6 +4391,26 @@ namespace VortaAegisPC
         private bool mSuppress;
         private Border mToggleBtn;
         private System.Windows.Shapes.Path mToggleIcon;
+        private Border mExpBtn;
+
+        internal Border RestoreFullButton { get { return mExpBtn; } }
+
+        private static bool IsVisualDescendantOf(DependencyObject node, DependencyObject ancestor)
+        {
+            DependencyObject cur = node;
+            while (cur != null)
+            {
+                if (ReferenceEquals(cur, ancestor)) return true;
+                DependencyObject parent = null;
+                try { parent = VisualTreeHelper.GetParent(cur); } catch { }
+                if (parent == null && cur is FrameworkContentElement)
+                {
+                    parent = ((FrameworkContentElement)cur).Parent;
+                }
+                cur = parent;
+            }
+            return false;
+        }
 
         public MiniBarWindow(IAppHostController ctrl)
         {
@@ -4435,6 +4455,7 @@ namespace VortaAegisPC
                 Top = Math.Max(0, wa.Bottom - Height - 18);
             }
 
+            StackPanel info = null;
             Border outer = new Border();
             outer.Background = ThemePalette.BrSurface;
             outer.BorderBrush = ThemePalette.BrOutline;
@@ -4443,10 +4464,16 @@ namespace VortaAegisPC
             outer.Padding = new Thickness(10, 6, 8, 6);
             outer.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
-                if (e.ButtonState == MouseButtonState.Pressed && !(e.OriginalSource is Thumb))
+                if (e.Handled || e.ButtonState != MouseButtonState.Pressed) return;
+                DependencyObject src = e.OriginalSource as DependencyObject;
+                if (src is Thumb || src is RepeatButton || IsVisualDescendantOf(src, mVolSlider)) return;
+                if (e.ClickCount >= 2 && IsVisualDescendantOf(src, info))
                 {
-                    try { DragMove(); } catch { }
+                    e.Handled = true;
+                    mCtrl.SwitchToMiniMode(false);
+                    return;
                 }
+                try { DragMove(); } catch { }
             };
             outer.PreviewMouseWheel += delegate(object s, MouseWheelEventArgs e)
             {
@@ -4474,9 +4501,11 @@ namespace VortaAegisPC
             mLed.Margin = new Thickness(0, 0, 8, 0);
             g.Children.Add(mLed);
 
-            StackPanel info = new StackPanel();
+            info = new StackPanel();
             info.VerticalAlignment = VerticalAlignment.Center;
             info.Margin = new Thickness(0, 0, 8, 0);
+            info.Background = Brushes.Transparent;
+            info.ToolTip = "드래그로 이동 · 더블클릭 시 전체 패널 복원";
             mTitle = new TextBlock();
             mTitle.FontSize = 11.5;
             mTitle.FontWeight = FontWeights.Bold;
@@ -4513,6 +4542,8 @@ namespace VortaAegisPC
             mToggleBtn.Cursor = Cursors.Hand;
             mToggleBtn.Child = tglCv;
             mToggleBtn.Margin = new Thickness(0, 0, 4, 0);
+            WindowChrome.SetIsHitTestVisibleInChrome(mToggleBtn, true);
+            mToggleBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; };
             mToggleBtn.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
             {
                 e.Handled = true;
@@ -4552,6 +4583,8 @@ namespace VortaAegisPC
             mMuteBtn.Margin = new Thickness(0, 0, 5, 0);
             mMuteBtn.ToolTip = "음소거 전환";
             mMuteBtn.Child = muteCv;
+            WindowChrome.SetIsHitTestVisibleInChrome(mMuteBtn, true);
+            mMuteBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; };
             mMuteBtn.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
             {
                 e.Handled = true;
@@ -4573,6 +4606,7 @@ namespace VortaAegisPC
             mVolSlider.Maximum = VolumeCurve.MAX_PERCENT;
             mVolSlider.Style = ThemePalette.CreateDarkSliderStyle();
             mVolSlider.VerticalAlignment = VerticalAlignment.Center;
+            WindowChrome.SetIsHitTestVisibleInChrome(mVolSlider, true);
             mVolSlider.ValueChanged += delegate(object s, RoutedPropertyChangedEventArgs<double> e)
             {
                 if (mSuppress) return;
@@ -4583,10 +4617,11 @@ namespace VortaAegisPC
             g.Children.Add(mVolSlider);
 
             TextBlock expTxt;
-            Border expBtn = MakeMiniChip("전체", out expTxt, delegate { mCtrl.SwitchToMiniMode(false); });
-            expBtn.Margin = new Thickness(6, 0, 4, 0);
-            Grid.SetColumn(expBtn, 7);
-            g.Children.Add(expBtn);
+            mExpBtn = MakeMiniChip("전체", out expTxt, delegate { mCtrl.SwitchToMiniMode(false); });
+            mExpBtn.ToolTip = "전체 컨트롤 패널로 복원";
+            mExpBtn.Margin = new Thickness(6, 0, 4, 0);
+            Grid.SetColumn(mExpBtn, 7);
+            g.Children.Add(mExpBtn);
 
             Border hideBtn = MakeMiniIconChip("M 3,3 L 9,9 M 9,3 L 3,9", 12, true, "트레이로 숨기기", delegate { mCtrl.HideToTray(); });
             hideBtn.Width = 24;
@@ -4635,8 +4670,10 @@ namespace VortaAegisPC
             b.ToolTip = tip;
             b.VerticalAlignment = VerticalAlignment.Center;
             b.Child = ThemePalette.MakeIcon(pathData, size, ThemePalette.BrTextPrimary, isStroke, 1.5);
+            WindowChrome.SetIsHitTestVisibleInChrome(b, true);
             b.MouseEnter += delegate { b.Background = ThemePalette.BrSurfaceHover; };
             b.MouseLeave += delegate { b.Background = ThemePalette.BrSurfaceHigh; };
+            b.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; };
             b.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
             {
                 e.Handled = true;
@@ -4664,8 +4701,10 @@ namespace VortaAegisPC
             tb.HorizontalAlignment = HorizontalAlignment.Center;
             tb.VerticalAlignment = VerticalAlignment.Center;
             b.Child = tb;
+            WindowChrome.SetIsHitTestVisibleInChrome(b, true);
             b.MouseEnter += delegate { b.Background = ThemePalette.BrSurfaceHover; };
             b.MouseLeave += delegate { b.Background = ThemePalette.BrSurfaceHigh; };
+            b.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; };
             b.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
             {
                 e.Handled = true;
