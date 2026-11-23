@@ -479,8 +479,8 @@ namespace VortaAegisPC
                     mB2 = 0.57000 * mB2 + white * 1.0526913;
                     double pinkRaw = (mB0 + mB1 + mB2 + white * 0.1848) * 0.12;
                     double pink = Math.Tanh(pinkRaw * 0.85);
-                    sampleL = sampleL * 0.85 + pink * 0.15;
-                    sampleR = sampleR * 0.85 + pink * 0.15;
+                    sampleL = sampleL * 0.82 + pink * 0.15;
+                    sampleR = sampleR * 0.82 + pink * 0.15;
                 }
                 else if (p.NoiseType == 3)
                 {

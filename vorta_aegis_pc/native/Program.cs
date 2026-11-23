@@ -1082,18 +1082,14 @@ namespace VortaAegisPC
                 prevGain = g;
             }
 
-            // 3. Exhaustive All-Preset x All-Profile 120% Clean Boost & Zero-Overshoot (No Hard Clamp) Matrix
+            // 3. Exhaustive All-Preset x All-Profile 120% Clean Boost & Unconditional 4x True-Peak / Zero-Overshoot Matrix (192/192)
             PcOutputProfile[] allProfiles = new PcOutputProfile[] { PcOutputProfile.PcSpeaker, PcOutputProfile.Headphone, PcOutputProfile.PureRaw };
             for (int pi = 0; pi < all.Count; pi++)
             {
                 PresetItem preset = all[pi];
                 for (int pr = 0; pr < allProfiles.Length; pr++)
                 {
-                    bool checkTp = (preset.NoiseType == 0 || preset.NoiseType == 3)
-                        && (!preset.IsSweep || Math.Max(preset.SweepStart, preset.SweepEnd) < 6000f)
-                        && preset.Freq1 < 6000f
-                        && preset.Freq2 < 6000f;
-                    double rms = VerifyZeroOvershootAt120(allProfiles[pr], preset, true, checkTp);
+                    double rms = VerifyZeroOvershootAt120(allProfiles[pr], preset, true);
                     Assert(!double.IsNaN(rms) && rms > 0.005, "Finite non-zero RMS for preset " + preset.Id + " prof=" + pr);
                 }
             }
@@ -1117,10 +1113,11 @@ namespace VortaAegisPC
                 Assert(ramp.OvershootCount == 0, "Zero hard-clamp overshoots across 80%->120% ramp");
             }
 
-            // 5. Ultrasonic -12 dB guard check in Headphone vs unguarded PureRaw at 120%
+            // 5. Ultrasonic -12 dB guard check in Headphone vs unguarded PureRaw at 120% (+ full true-peak check with guard OFF)
             PresetItem pUltra = null;
             for (int i = 0; i < all.Count; i++) { if (all[i].NoiseType == 2) { pUltra = all[i]; break; } }
             Assert(pUltra != null, "ultrasonic preset found");
+            VerifyZeroOvershootAt120(PcOutputProfile.PureRaw, pUltra, false);
             double rmsUltraOff = RenderSecond(PcOutputProfile.PureRaw, pUltra, false, 120);
             double rmsUltraGuard = RenderSecond(PcOutputProfile.Headphone, pUltra, false, 120);
             AssertNear(rmsUltraGuard / rmsUltraOff, 0.25, 0.03, "Headphone forces -12 dB ultrasonic protection at 120%");
@@ -1254,7 +1251,7 @@ namespace VortaAegisPC
             return maxTp;
         }
 
-        private static double VerifyZeroOvershootAt120(PcOutputProfile profile, PresetItem preset, bool guard, bool checkCubicTruePeak)
+        private static double VerifyZeroOvershootAt120(PcOutputProfile profile, PresetItem preset, bool guard)
         {
             AegisDspEngine eng = new AegisDspEngine(48000);
             eng.SetOutputProfile(profile);
@@ -1287,38 +1284,29 @@ namespace VortaAegisPC
                     if (aR > maxAbs) maxAbs = aR;
                     sumSq += (l * l) + (r * r);
 
-                    if (checkCubicTruePeak)
+                    pL0 = pL1; pL1 = pL2; pL2 = pL3; pL3 = l;
+                    pR0 = pR1; pR1 = pR2; pR2 = pR3; pR3 = r;
+                    totalFrames++;
+                    // Starts evaluating [s0..s1] once s2 is pushed (totalFrames >= 3) since pL0=0 pre-roll at frame 3
+                    if (totalFrames >= 3)
                     {
-                        pL0 = pL1; pL1 = pL2; pL2 = pL3; pL3 = l;
-                        pR0 = pR1; pR1 = pR2; pR2 = pR3; pR3 = r;
-                        totalFrames++;
-                        // Starts evaluating [s0..s1] once s2 is pushed (totalFrames >= 3) since pL0=0 pre-roll at frame 3
-                        if (totalFrames >= 3)
-                        {
-                            double tp = Math.Max(CatmullRomMax(pL0, pL1, pL2, pL3), CatmullRomMax(pR0, pR1, pR2, pR3));
-                            if (tp > maxTp) maxTp = tp;
-                        }
+                        double tp = Math.Max(CatmullRomMax(pL0, pL1, pL2, pL3), CatmullRomMax(pR0, pR1, pR2, pR3));
+                        if (tp > maxTp) maxTp = tp;
                     }
                 }
             }
 
-            if (checkCubicTruePeak)
-            {
-                // Render 1 lookahead sample s[N] so final interval [s_{N-2}..s_{N-1}] also has full 4-tap Catmull-Rom support
-                float[] tail = new float[2];
-                eng.RenderStereoFloat(tail, 1);
-                pL0 = pL1; pL1 = pL2; pL2 = pL3; pL3 = tail[0];
-                pR0 = pR1; pR1 = pR2; pR2 = pR3; pR3 = tail[1];
-                double tailTp = Math.Max(CatmullRomMax(pL0, pL1, pL2, pL3), CatmullRomMax(pR0, pR1, pR2, pR3));
-                if (tailTp > maxTp) maxTp = tailTp;
-            }
+            // Render 1 lookahead sample s[N] so final interval [s_{N-2}..s_{N-1}] also has full 4-tap Catmull-Rom support
+            float[] tail = new float[2];
+            eng.RenderStereoFloat(tail, 1);
+            pL0 = pL1; pL1 = pL2; pL2 = pL3; pL3 = tail[0];
+            pR0 = pR1; pR1 = pR2; pR2 = pR3; pR3 = tail[1];
+            double tailTp = Math.Max(CatmullRomMax(pL0, pL1, pL2, pL3), CatmullRomMax(pR0, pR1, pR2, pR3));
+            if (tailTp > maxTp) maxTp = tailTp;
 
             Assert(eng.OvershootCount == 0, "Zero overshoot (no hard clamp) preset=" + preset.Id + " profile=" + profile);
             Assert(maxAbs <= AegisDspEngine.CLEAN_BOOST_CEILING + 1e-6, "Sample peak L/R <= -0.50 dBTP preset=" + preset.Id);
-            if (checkCubicTruePeak)
-            {
-                Assert(maxTp <= AegisDspEngine.CLEAN_BOOST_CEILING + 5e-4, "Full-duration L+R 4x True-peak (all intervals) <= -0.50 dBTP preset=" + preset.Id);
-            }
+            Assert(maxTp <= AegisDspEngine.CLEAN_BOOST_CEILING + 5e-4, "Unconditional L+R 4x True-peak (all 192 combos, all intervals) <= -0.50 dBTP preset=" + preset.Id);
             return Math.Sqrt(sumSq / (110 * BLK * 2));
         }
 
