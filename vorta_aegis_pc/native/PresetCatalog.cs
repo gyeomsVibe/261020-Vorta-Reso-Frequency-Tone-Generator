@@ -30,7 +30,7 @@ namespace VortaAegisPC
         public float SweepDurationSec;
         public bool IsAntiPhase;
         public float BinauralBeat;
-        public int NoiseType; // 0: None, 1: Pink, 2: Ultrasonic Mosquito, 3: Dragonfly Flutter
+        public int NoiseType; // 0: None, 1: Pink, 2: Ultrasonic Mosquito, 3: Dragonfly Flutter, 4: Brown, 5: Tinnitus Soft Mask
         public bool FmMod;
         public float FmDepth;
         public float FmRate;
@@ -38,10 +38,31 @@ namespace VortaAegisPC
         public float AmDepth;
         public float AmRate;
 
+        // Pack provenance metadata
+        public string PackId = "core";
+        public string PackName = "보르타 코어";
+        public string PackVersion = "2.3.0";
+        public bool IsCore = true;
+
         public string BuildSpecLine()
         {
             StringBuilder sb = new StringBuilder();
-            if (IsSweep)
+            if (!IsSweep && Freq1 <= 0f)
+            {
+                if (NoiseType == 4)
+                {
+                    sb.Append("브라운 노이즈 1/f² · 순수 스테레오 차폐");
+                }
+                else if (NoiseType == 5)
+                {
+                    sb.Append("소프트 대역 마스킹 · 2.8kHz 롤오프");
+                }
+                else
+                {
+                    sb.Append("스테레오 노이즈 마스킹");
+                }
+            }
+            else if (IsSweep)
             {
                 sb.Append(string.Format(CultureInfo.InvariantCulture,
                     "스윕 {0:F1}~{1:F1} Hz · {2:F0}s 왕복", SweepStart, SweepEnd, SweepDurationSec));
@@ -74,8 +95,40 @@ namespace VortaAegisPC
             {
                 sb.Append(string.Format(CultureInfo.InvariantCulture, " · AM {0:F0}%", AmDepth * 100.0f));
             }
+            if ((IsSweep || Freq1 > 0f) && NoiseType == 1)
+            {
+                sb.Append(" · 핑크 노이즈");
+            }
+            else if ((IsSweep || Freq1 > 0f) && NoiseType == 4)
+            {
+                sb.Append(" · 브라운 노이즈");
+            }
+            else if ((IsSweep || Freq1 > 0f) && NoiseType == 5)
+            {
+                sb.Append(" · 대역 마스킹");
+            }
             return sb.ToString();
         }
+    }
+
+    public sealed class PresetPackInfo
+    {
+        public string PackId;
+        public string PackName;
+        public string PackVersion;
+        public string Author;
+        public string License;
+        public string SourcePath;
+        public bool IsCore;
+        public int PresetCount;
+    }
+
+    public sealed class CatalogLoadResult
+    {
+        public IList<PresetItem> Presets;
+        public IList<PresetPackInfo> Packs;
+        public IList<string> SkippedFiles;
+        public string UserPacksDir;
     }
 
     public static class VolumeCurve
@@ -163,6 +216,12 @@ namespace VortaAegisPC
             "모기·벌레"
         };
 
+        public static string FormatTabLabel(int tabIndex, int count)
+        {
+            int idx = ClampTabIndex(tabIndex);
+            return TAB_SHORT_NAMES[idx] + " " + Math.Max(0, count).ToString(CultureInfo.InvariantCulture);
+        }
+
         public static int ClampTabIndex(int tabIndex)
         {
             return (tabIndex >= 0 && tabIndex < TAB_COUNT) ? tabIndex : 0;
@@ -203,7 +262,67 @@ namespace VortaAegisPC
         public static IList<PresetItem> LoadAll(string baseDir)
         {
             if (sCached != null) return sCached;
+            List<PresetItem> core = LoadCoreInternal(baseDir);
+            sCached = core.AsReadOnly();
+            return sCached;
+        }
 
+        public static CatalogLoadResult LoadAllWithPacks(string baseDir, string userPacksDir)
+        {
+            List<PresetItem> all = LoadCoreInternal(baseDir);
+            List<PresetPackInfo> packs = new List<PresetPackInfo>();
+            List<string> skipped = new List<string>();
+            HashSet<int> usedIds = new HashSet<int>();
+            HashSet<string> usedPackIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            PresetPackInfo coreInfo = new PresetPackInfo();
+            coreInfo.PackId = "core";
+            coreInfo.PackName = "보르타 코어 48";
+            coreInfo.PackVersion = "2.3.0";
+            coreInfo.Author = "gyeomsVibe";
+            coreInfo.License = "Proprietary Commercial";
+            coreInfo.SourcePath = Path.Combine(baseDir, "web", "presets.json");
+            coreInfo.IsCore = true;
+            coreInfo.PresetCount = all.Count;
+            packs.Add(coreInfo);
+            usedPackIds.Add("core");
+            for (int i = 0; i < all.Count; i++)
+            {
+                usedIds.Add(all[i].Id);
+            }
+
+            List<string> candidateDirs = new List<string>();
+            if (!string.IsNullOrEmpty(baseDir))
+            {
+                candidateDirs.Add(Path.Combine(baseDir, "packs"));
+            }
+            if (!string.IsNullOrEmpty(userPacksDir))
+            {
+                candidateDirs.Add(userPacksDir);
+            }
+
+            for (int d = 0; d < candidateDirs.Count; d++)
+            {
+                string dir = candidateDirs[d];
+                if (!Directory.Exists(dir)) continue;
+                string[] files = Directory.GetFiles(dir, "*.json");
+                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+                for (int f = 0; f < files.Length; f++)
+                {
+                    TryLoadPackFile(files[f], all, packs, skipped, usedIds, usedPackIds);
+                }
+            }
+
+            CatalogLoadResult res = new CatalogLoadResult();
+            res.Presets = all.AsReadOnly();
+            res.Packs = packs.AsReadOnly();
+            res.SkippedFiles = skipped.AsReadOnly();
+            res.UserPacksDir = userPacksDir ?? "";
+            return res;
+        }
+
+        private static List<PresetItem> LoadCoreInternal(string baseDir)
+        {
             string jsonPath = Path.Combine(baseDir, "web", "presets.json");
             if (!File.Exists(jsonPath))
             {
@@ -224,29 +343,7 @@ namespace VortaAegisPC
             {
                 Dictionary<string, object> dict = obj as Dictionary<string, object>;
                 if (dict == null) continue;
-                PresetItem item = new PresetItem();
-                item.Id = Convert.ToInt32(dict["id"], CultureInfo.InvariantCulture);
-                item.ShortCode = Convert.ToString(dict["shortCode"], CultureInfo.InvariantCulture);
-                item.TabIndex = Convert.ToInt32(dict["tabIndex"], CultureInfo.InvariantCulture);
-                item.Title = Convert.ToString(dict["title"], CultureInfo.InvariantCulture);
-                item.Badge = Convert.ToString(dict["badge"], CultureInfo.InvariantCulture);
-                item.Desc = Convert.ToString(dict["desc"], CultureInfo.InvariantCulture);
-                item.Freq1 = Convert.ToSingle(dict["freq1"], CultureInfo.InvariantCulture);
-                item.Freq2 = Convert.ToSingle(dict["freq2"], CultureInfo.InvariantCulture);
-                item.IsSweep = Convert.ToBoolean(dict["isSweep"], CultureInfo.InvariantCulture);
-                item.SweepStart = Convert.ToSingle(dict["sweepStart"], CultureInfo.InvariantCulture);
-                item.SweepEnd = Convert.ToSingle(dict["sweepEnd"], CultureInfo.InvariantCulture);
-                item.SweepDurationSec = Convert.ToSingle(dict["sweepDurationSec"], CultureInfo.InvariantCulture);
-                item.IsAntiPhase = Convert.ToBoolean(dict["isAntiPhase"], CultureInfo.InvariantCulture);
-                item.BinauralBeat = Convert.ToSingle(dict["binauralBeat"], CultureInfo.InvariantCulture);
-                item.NoiseType = Convert.ToInt32(dict["noiseType"], CultureInfo.InvariantCulture);
-                item.FmMod = Convert.ToBoolean(dict["fmMod"], CultureInfo.InvariantCulture);
-                item.FmDepth = Convert.ToSingle(dict["fmDepth"], CultureInfo.InvariantCulture);
-                item.FmRate = Convert.ToSingle(dict["fmRate"], CultureInfo.InvariantCulture);
-                item.AmMod = Convert.ToBoolean(dict["amMod"], CultureInfo.InvariantCulture);
-                item.AmDepth = Convert.ToSingle(dict["amDepth"], CultureInfo.InvariantCulture);
-                item.AmRate = Convert.ToSingle(dict["amRate"], CultureInfo.InvariantCulture);
-
+                PresetItem item = ParsePresetDict(dict, "core", "보르타 코어 48", "2.3.0", true);
                 if (item.TabIndex < 0 || item.TabIndex >= TabSyncPolicy.TAB_COUNT)
                 {
                     throw new InvalidDataException("Invalid tabIndex for preset " + item.Id);
@@ -262,9 +359,154 @@ namespace VortaAegisPC
                     throw new InvalidDataException("Tab count mismatch on tab " + t);
                 }
             }
+            return list;
+        }
 
-            sCached = list.AsReadOnly();
-            return sCached;
+        private static void TryLoadPackFile(
+            string path,
+            List<PresetItem> all,
+            List<PresetPackInfo> packs,
+            List<string> skipped,
+            HashSet<int> usedIds,
+            HashSet<string> usedPackIds)
+        {
+            string fn = Path.GetFileName(path);
+            try
+            {
+                string raw = File.ReadAllText(path, Encoding.UTF8);
+                JavaScriptSerializer serializer = new JavaScriptSerializer();
+                Dictionary<string, object> root = serializer.Deserialize<Dictionary<string, object>>(raw);
+                if (root == null)
+                {
+                    skipped.Add(fn + ": empty root object");
+                    return;
+                }
+                if (!root.ContainsKey("schemaVersion"))
+                {
+                    skipped.Add(fn + ": missing schemaVersion");
+                    return;
+                }
+                int schemaVer = Convert.ToInt32(root["schemaVersion"], CultureInfo.InvariantCulture);
+                if (schemaVer != 1)
+                {
+                    skipped.Add(fn + ": unsupported schemaVersion=" + schemaVer);
+                    return;
+                }
+                string packId = root.ContainsKey("packId") ? Convert.ToString(root["packId"], CultureInfo.InvariantCulture) : "";
+                string packName = root.ContainsKey("packName") ? Convert.ToString(root["packName"], CultureInfo.InvariantCulture) : "";
+                string packVer = root.ContainsKey("packVersion") ? Convert.ToString(root["packVersion"], CultureInfo.InvariantCulture) : "1.0.0";
+                string author = root.ContainsKey("author") ? Convert.ToString(root["author"], CultureInfo.InvariantCulture) : "External";
+                string license = root.ContainsKey("license") ? Convert.ToString(root["license"], CultureInfo.InvariantCulture) : "Custom";
+                if (string.IsNullOrEmpty(packId) || string.IsNullOrEmpty(packName) || usedPackIds.Contains(packId))
+                {
+                    skipped.Add(fn + ": invalid or duplicate packId");
+                    return;
+                }
+                if (!root.ContainsKey("presets"))
+                {
+                    skipped.Add(fn + ": missing presets array");
+                    return;
+                }
+                System.Collections.IList rawPresets = root["presets"] as System.Collections.IList;
+                if (rawPresets == null || rawPresets.Count == 0)
+                {
+                    skipped.Add(fn + ": empty presets array");
+                    return;
+                }
+
+                List<PresetItem> validated = new List<PresetItem>();
+                HashSet<int> batchIds = new HashSet<int>();
+                for (int i = 0; i < rawPresets.Count; i++)
+                {
+                    Dictionary<string, object> d = rawPresets[i] as Dictionary<string, object>;
+                    if (d == null)
+                    {
+                        skipped.Add(fn + ": malformed preset entry");
+                        return;
+                    }
+                    PresetItem item = ParsePresetDict(d, packId, packName, packVer, false);
+                    if (!IsValidExtensionPreset(item) || usedIds.Contains(item.Id) || batchIds.Contains(item.Id))
+                    {
+                        skipped.Add(fn + ": invalid or conflicting preset ID " + item.Id);
+                        return;
+                    }
+                    batchIds.Add(item.Id);
+                    validated.Add(item);
+                }
+
+                usedPackIds.Add(packId);
+                for (int i = 0; i < validated.Count; i++)
+                {
+                    usedIds.Add(validated[i].Id);
+                    all.Add(validated[i]);
+                }
+
+                PresetPackInfo info = new PresetPackInfo();
+                info.PackId = packId;
+                info.PackName = packName;
+                info.PackVersion = packVer;
+                info.Author = author;
+                info.License = license;
+                info.SourcePath = path;
+                info.IsCore = false;
+                info.PresetCount = validated.Count;
+                packs.Add(info);
+            }
+            catch (Exception ex)
+            {
+                skipped.Add(fn + ": " + ex.GetType().Name);
+            }
+        }
+
+        private static bool IsValidExtensionPreset(PresetItem item)
+        {
+            if (item == null) return false;
+            if (item.Id < 100 || item.Id > 99999) return false;
+            if (string.IsNullOrEmpty(item.ShortCode) || string.IsNullOrEmpty(item.Title)) return false;
+            if (item.TabIndex < 0 || item.TabIndex >= TabSyncPolicy.TAB_COUNT) return false;
+            if (item.NoiseType < 0 || item.NoiseType > 5) return false;
+            if (float.IsNaN(item.Freq1) || float.IsInfinity(item.Freq1) || item.Freq1 < 0f || item.Freq1 > 22000f) return false;
+            if (float.IsNaN(item.Freq2) || float.IsInfinity(item.Freq2) || item.Freq2 < 0f || item.Freq2 > 22000f) return false;
+            if (float.IsNaN(item.SweepStart) || float.IsInfinity(item.SweepStart) || item.SweepStart < 0f || item.SweepStart > 22000f) return false;
+            if (float.IsNaN(item.SweepEnd) || float.IsInfinity(item.SweepEnd) || item.SweepEnd < 0f || item.SweepEnd > 22000f) return false;
+            if (float.IsNaN(item.SweepDurationSec) || float.IsInfinity(item.SweepDurationSec) || item.SweepDurationSec < 0f) return false;
+            if (float.IsNaN(item.BinauralBeat) || float.IsInfinity(item.BinauralBeat) || item.BinauralBeat < 0f || item.BinauralBeat > 500f) return false;
+            if (float.IsNaN(item.FmDepth) || item.FmDepth < 0f || item.FmDepth > 0.5f) return false;
+            if (float.IsNaN(item.FmRate) || item.FmRate < 0f || item.FmRate > 100f) return false;
+            if (float.IsNaN(item.AmDepth) || item.AmDepth < 0f || item.AmDepth > 0.95f) return false;
+            if (float.IsNaN(item.AmRate) || item.AmRate < 0f || item.AmRate > 100f) return false;
+            return true;
+        }
+
+        private static PresetItem ParsePresetDict(Dictionary<string, object> dict, string packId, string packName, string packVer, bool isCore)
+        {
+            PresetItem item = new PresetItem();
+            item.Id = Convert.ToInt32(dict["id"], CultureInfo.InvariantCulture);
+            item.ShortCode = Convert.ToString(dict["shortCode"], CultureInfo.InvariantCulture);
+            item.TabIndex = Convert.ToInt32(dict["tabIndex"], CultureInfo.InvariantCulture);
+            item.Title = Convert.ToString(dict["title"], CultureInfo.InvariantCulture);
+            item.Badge = dict.ContainsKey("badge") ? Convert.ToString(dict["badge"], CultureInfo.InvariantCulture) : packName;
+            item.Desc = dict.ContainsKey("desc") ? Convert.ToString(dict["desc"], CultureInfo.InvariantCulture) : "";
+            item.Freq1 = Convert.ToSingle(dict["freq1"], CultureInfo.InvariantCulture);
+            item.Freq2 = Convert.ToSingle(dict["freq2"], CultureInfo.InvariantCulture);
+            item.IsSweep = Convert.ToBoolean(dict["isSweep"], CultureInfo.InvariantCulture);
+            item.SweepStart = Convert.ToSingle(dict["sweepStart"], CultureInfo.InvariantCulture);
+            item.SweepEnd = Convert.ToSingle(dict["sweepEnd"], CultureInfo.InvariantCulture);
+            item.SweepDurationSec = Convert.ToSingle(dict["sweepDurationSec"], CultureInfo.InvariantCulture);
+            item.IsAntiPhase = Convert.ToBoolean(dict["isAntiPhase"], CultureInfo.InvariantCulture);
+            item.BinauralBeat = Convert.ToSingle(dict["binauralBeat"], CultureInfo.InvariantCulture);
+            item.NoiseType = Convert.ToInt32(dict["noiseType"], CultureInfo.InvariantCulture);
+            item.FmMod = Convert.ToBoolean(dict["fmMod"], CultureInfo.InvariantCulture);
+            item.FmDepth = Convert.ToSingle(dict["fmDepth"], CultureInfo.InvariantCulture);
+            item.FmRate = Convert.ToSingle(dict["fmRate"], CultureInfo.InvariantCulture);
+            item.AmMod = Convert.ToBoolean(dict["amMod"], CultureInfo.InvariantCulture);
+            item.AmDepth = Convert.ToSingle(dict["amDepth"], CultureInfo.InvariantCulture);
+            item.AmRate = Convert.ToSingle(dict["amRate"], CultureInfo.InvariantCulture);
+            item.PackId = packId;
+            item.PackName = packName;
+            item.PackVersion = packVer;
+            item.IsCore = isCore;
+            return item;
         }
 
         public static PresetItem FindById(IList<PresetItem> all, int id)

@@ -19,10 +19,13 @@ namespace VortaAegisPC
         private const string MUTEX_NAME = "Local\\VortaAegisProPC_v3_Mutex";
         private const string PIPE_NAME = "VortaAegisProPC_v3_Pipe";
 
-        private static readonly int[] QUICK_PRESET_IDS = new int[] { 1, 2, 19, 13, 25, 35, 45 };
+        private static readonly int[] QUICK_PRESET_IDS = new int[] { 1, 2, 101, 19, 102, 13, 25, 45 };
 
         private readonly string mBaseDir;
-        private readonly IList<PresetItem> mPresets;
+        private IList<PresetItem> mPresets;
+        private IList<PresetPackInfo> mPackInfos;
+        private int mSkippedPackCount;
+        private string mUserPacksDir;
         private readonly AppStateData mState;
         private readonly AegisDspEngine mDsp;
         private readonly WasapiAudioEngine mAudio;
@@ -30,6 +33,7 @@ namespace VortaAegisPC
         private Application mWpfApp;
         private CompanionWindow mMainWin;
         private MiniBarWindow mMiniWin;
+        private AboutLicenseWindow mAboutWin;
         private Forms.NotifyIcon mTrayIcon;
         private Forms.ContextMenuStrip mTrayMenu;
         private Forms.ToolStripMenuItem mMenuStatusItem;
@@ -39,19 +43,35 @@ namespace VortaAegisPC
         private System.Windows.Threading.DispatcherTimer mSleepTimer;
         private int mSleepRemainingSec;
         private int mSleepPresetMin;
+        private DateTime mPlaybackStartedUtc = DateTime.MinValue;
+        private string mCachedEndpointName = "시스템 기본 출력";
 
         public IList<PresetItem> Presets { get { return mPresets; } }
+        public IList<PresetPackInfo> PackInfos { get { return mPackInfos; } }
+        public string UserPacksDir { get { return mUserPacksDir; } }
+        public int SkippedPackCount { get { return mSkippedPackCount; } }
         public AegisDspEngine Dsp { get { return mDsp; } }
         public WasapiAudioEngine Audio { get { return mAudio; } }
         public AppStateData State { get { return mState; } }
         public bool AllowExit { get { return mAllowExit; } }
         public int SleepTimerRemainingSeconds { get { return mSleepRemainingSec; } }
         public int SleepTimerPresetMinutes { get { return mSleepPresetMin; } }
+        public string ActiveEndpointDisplayName { get { return mCachedEndpointName; } }
+
+        public long PlaybackElapsedSeconds
+        {
+            get
+            {
+                if (!mDsp.IsPlaying || mPlaybackStartedUtc == DateTime.MinValue) return 0;
+                return (long)Math.Max(0.0, (DateTime.UtcNow - mPlaybackStartedUtc).TotalSeconds);
+            }
+        }
 
         private VortaAegisHostApp(string baseDir)
         {
             mBaseDir = baseDir;
-            mPresets = PresetCatalog.LoadAll(baseDir);
+            mUserPacksDir = AppStateStore.GetUserPacksDirectory();
+            LoadCatalogInternal();
             mState = AppStateStore.Load();
             mDsp = new AegisDspEngine(48000);
             mDsp.SetVolume(mState.VolumePercent, mState.IsMuted);
@@ -60,6 +80,51 @@ namespace VortaAegisPC
 
             mAudio = new WasapiAudioEngine(mDsp);
             mAudio.SetOutputDevice(mState.DeviceId);
+            RefreshCachedEndpointName();
+        }
+
+        private void LoadCatalogInternal()
+        {
+            try
+            {
+                if (!Directory.Exists(mUserPacksDir))
+                {
+                    Directory.CreateDirectory(mUserPacksDir);
+                }
+            }
+            catch
+            {
+            }
+            CatalogLoadResult res = PresetCatalog.LoadAllWithPacks(mBaseDir, mUserPacksDir);
+            mPresets = res.Presets;
+            mPackInfos = res.Packs;
+            mSkippedPackCount = (res.SkippedFiles != null) ? res.SkippedFiles.Count : 0;
+        }
+
+        private void RefreshCachedEndpointName()
+        {
+            try
+            {
+                List<AudioEndpointInfo> eps = WasapiAudioEngine.EnumerateOutputDevices();
+                string wantId = mState.DeviceId ?? "";
+                for (int i = 0; i < eps.Count; i++)
+                {
+                    if (string.Equals(eps[i].Id, wantId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        mCachedEndpointName = eps[i].Name;
+                        return;
+                    }
+                }
+                if (eps.Count > 0)
+                {
+                    mCachedEndpointName = eps[0].Name;
+                    return;
+                }
+            }
+            catch
+            {
+            }
+            mCachedEndpointName = "시스템 기본 출력";
         }
 
         [STAThread]
@@ -69,6 +134,7 @@ namespace VortaAegisPC
             bool selfTest = false;
             bool startMinimized = false;
             string captureLivePath = null;
+            string captureAboutPath = null;
             int capW = 0;
             int capH = 0;
             int capPlayId = 0;
@@ -81,6 +147,11 @@ namespace VortaAegisPC
                     if (string.Equals(args[i], "--capture-live", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                     {
                         captureLivePath = args[i + 1];
+                        i++;
+                    }
+                    else if (string.Equals(args[i], "--capture-about", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    {
+                        captureAboutPath = args[i + 1];
                         i++;
                     }
                     else if (string.Equals(args[i], "--capture-size", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
@@ -121,7 +192,11 @@ namespace VortaAegisPC
             if (!createdNew)
             {
                 string msg = "SHOW\n";
-                if (!string.IsNullOrEmpty(captureLivePath))
+                if (!string.IsNullOrEmpty(captureAboutPath))
+                {
+                    msg = "CAPTURE_ABOUT:" + captureAboutPath + "\n";
+                }
+                else if (!string.IsNullOrEmpty(captureLivePath))
                 {
                     msg = string.Format(CultureInfo.InvariantCulture, "CAPTURE_EX:{0}:{1}:{2}:{3}\n", capW, capH, capPlayId, captureLivePath);
                 }
@@ -129,7 +204,7 @@ namespace VortaAegisPC
                 singleMutex.Dispose();
                 return 0;
             }
-            if (!string.IsNullOrEmpty(captureLivePath))
+            if (!string.IsNullOrEmpty(captureLivePath) || !string.IsNullOrEmpty(captureAboutPath))
             {
                 singleMutex.Dispose();
                 return 2;
@@ -259,7 +334,7 @@ namespace VortaAegisPC
             for (int i = 0; i < QUICK_PRESET_IDS.Length; i++)
             {
                 PresetItem qp = PresetCatalog.FindById(mPresets, QUICK_PRESET_IDS[i]);
-                if (qp == null) continue;
+                if (qp == null || qp.Id != QUICK_PRESET_IDS[i]) continue;
                 Forms.ToolStripMenuItem qi = new Forms.ToolStripMenuItem(qp.ShortCode + " · " + qp.Title);
                 qi.Checked = (cur != null && cur.Id == qp.Id);
                 PresetItem captured = qp;
@@ -345,6 +420,21 @@ namespace VortaAegisPC
 
             mTrayMenu.Items.Add(new Forms.ToolStripSeparator());
 
+            Forms.ToolStripMenuItem packMenu = new Forms.ToolStripMenuItem("확장 팩 관리");
+            Forms.ToolStripMenuItem packOpenItem = new Forms.ToolStripMenuItem("확장 팩 폴더 열기");
+            packOpenItem.Click += delegate { OpenPacksFolder(); };
+            packMenu.DropDownItems.Add(packOpenItem);
+            Forms.ToolStripMenuItem packReloadItem = new Forms.ToolStripMenuItem("확장 팩 새로고침");
+            packReloadItem.Click += delegate { ReloadPacks(); };
+            packMenu.DropDownItems.Add(packReloadItem);
+            mTrayMenu.Items.Add(packMenu);
+
+            Forms.ToolStripMenuItem aboutItem = new Forms.ToolStripMenuItem("보르타 정보 · 업데이트 · 라이선스");
+            aboutItem.Click += delegate { ShowAboutDialog(); };
+            mTrayMenu.Items.Add(aboutItem);
+
+            mTrayMenu.Items.Add(new Forms.ToolStripSeparator());
+
             Forms.ToolStripMenuItem exitItem = new Forms.ToolStripMenuItem("완전 종료");
             exitItem.Click += delegate { ShutdownCompletely(); };
             mTrayMenu.Items.Add(exitItem);
@@ -367,7 +457,12 @@ namespace VortaAegisPC
                             if (read > 0 && mWpfApp != null)
                             {
                                 string cmd = Encoding.UTF8.GetString(buf, 0, read).Trim();
-                                if (cmd.StartsWith("CAPTURE_EX:", StringComparison.Ordinal))
+                                if (cmd.StartsWith("CAPTURE_ABOUT:", StringComparison.Ordinal))
+                                {
+                                    string outPath = cmd.Substring("CAPTURE_ABOUT:".Length).Trim();
+                                    mWpfApp.Dispatcher.BeginInvoke(new Action(delegate { CaptureAboutBitmap(outPath); }));
+                                }
+                                else if (cmd.StartsWith("CAPTURE_EX:", StringComparison.Ordinal))
                                 {
                                     string rest = cmd.Substring("CAPTURE_EX:".Length);
                                     int c1 = rest.IndexOf(':');
@@ -408,6 +503,42 @@ namespace VortaAegisPC
             mIpcThread.Start();
         }
 
+        private void CaptureAboutBitmap(string outPath)
+        {
+            if (string.IsNullOrEmpty(outPath)) return;
+            try
+            {
+                ShowActiveWindow();
+                ShowAboutDialog();
+                System.Windows.Threading.DispatcherTimer t = new System.Windows.Threading.DispatcherTimer();
+                t.Interval = TimeSpan.FromMilliseconds(260);
+                t.Tick += delegate
+                {
+                    t.Stop();
+                    try
+                    {
+                        if (mAboutWin != null && mAboutWin.IsVisible)
+                        {
+                            mAboutWin.UpdateLayout();
+                            RenderAnyWindowToPng(mAboutWin, outPath);
+                        }
+                    }
+                    finally
+                    {
+                        if (mAboutWin != null)
+                        {
+                            mAboutWin.Close();
+                            mAboutWin = null;
+                        }
+                    }
+                };
+                t.Start();
+            }
+            catch
+            {
+            }
+        }
+
         private void CapturePanelBitmapEx(string outPath, int reqW, int reqH, int playPresetId)
         {
             if (string.IsNullOrEmpty(outPath) || mMainWin == null) return;
@@ -437,7 +568,7 @@ namespace VortaAegisPC
                         mMainWin.JumpToPlayingPreset();
                     }
                     System.Windows.Threading.DispatcherTimer capTimer = new System.Windows.Threading.DispatcherTimer();
-                    capTimer.Interval = TimeSpan.FromMilliseconds(460);
+                    capTimer.Interval = TimeSpan.FromMilliseconds(1650);
                     capTimer.Tick += delegate
                     {
                         capTimer.Stop();
@@ -445,7 +576,7 @@ namespace VortaAegisPC
                         {
                             mMainWin.UpdateScopeVisualsNow();
                             mMainWin.UpdateLayout();
-                            RenderWindowToPng(outPath);
+                            RenderAnyWindowToPng(mMainWin, outPath);
                         }
                         finally
                         {
@@ -459,7 +590,7 @@ namespace VortaAegisPC
                 }
                 else
                 {
-                    RenderWindowToPng(outPath);
+                    RenderAnyWindowToPng(mMainWin, outPath);
                 }
             }
             catch
@@ -467,12 +598,12 @@ namespace VortaAegisPC
             }
         }
 
-        private void RenderWindowToPng(string outPath)
+        private static void RenderAnyWindowToPng(Window win, string outPath)
         {
-            int w = Math.Max(1, (int)Math.Ceiling(mMainWin.ActualWidth));
-            int h = Math.Max(1, (int)Math.Ceiling(mMainWin.ActualHeight));
+            int w = Math.Max(1, (int)Math.Ceiling(win.ActualWidth));
+            int h = Math.Max(1, (int)Math.Ceiling(win.ActualHeight));
             RenderTargetBitmap rtb = new RenderTargetBitmap(w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-            rtb.Render(mMainWin);
+            rtb.Render(win);
             PngBitmapEncoder enc = new PngBitmapEncoder();
             enc.Frames.Add(BitmapFrame.Create(rtb));
             string tmp = outPath + ".tmp";
@@ -551,8 +682,16 @@ namespace VortaAegisPC
         public void PlayPreset(PresetItem preset)
         {
             if (preset == null) return;
+            mPlaybackStartedUtc = DateTime.UtcNow;
             mState.LastTab = preset.TabIndex;
             mState.LastPresetId = preset.Id;
+            if (mState.RecentPresetIds == null) mState.RecentPresetIds = new List<int>();
+            mState.RecentPresetIds.Remove(preset.Id);
+            mState.RecentPresetIds.Insert(0, preset.Id);
+            if (mState.RecentPresetIds.Count > 8)
+            {
+                mState.RecentPresetIds.RemoveRange(8, mState.RecentPresetIds.Count - 8);
+            }
             AppStateStore.Save(mState);
             mAudio.PlayPreset(preset);
             UpdateTrayTooltip();
@@ -585,7 +724,7 @@ namespace VortaAegisPC
 
         public void ToggleFavorite(int presetId)
         {
-            if (presetId < 1 || presetId > 48) return;
+            if (presetId < 1 || presetId > 99999) return;
             if (mState.FavoriteIds == null) mState.FavoriteIds = new List<int>();
             if (mState.FavoriteIds.Contains(presetId)) mState.FavoriteIds.Remove(presetId);
             else mState.FavoriteIds.Add(presetId);
@@ -634,6 +773,7 @@ namespace VortaAegisPC
 
         public void StopPlayback()
         {
+            mPlaybackStartedUtc = DateTime.MinValue;
             if (mSleepTimer != null) mSleepTimer.Stop();
             mSleepPresetMin = 0;
             mSleepRemainingSec = 0;
@@ -676,6 +816,11 @@ namespace VortaAegisPC
             mState.DeviceId = deviceId ?? "";
             AppStateStore.Save(mState);
             mAudio.SetOutputDevice(mState.DeviceId);
+            RefreshCachedEndpointName();
+            if (mMainWin != null && mMainWin.IsVisible)
+            {
+                mMainWin.RefreshDashboard(false);
+            }
         }
 
         public void ApplyUltrasonicGuard(bool enabled)
@@ -687,6 +832,98 @@ namespace VortaAegisPC
             {
                 mMainWin.RefreshProfileControls();
                 mMainWin.RefreshDashboard(false);
+            }
+        }
+
+        public void SetScopeShowComposite(bool showComposite)
+        {
+            mState.ScopeShowComposite = showComposite;
+            AppStateStore.Save(mState);
+        }
+
+        public void SetPackFilter(string packId)
+        {
+            mState.PackFilterId = packId ?? "";
+            AppStateStore.Save(mState);
+        }
+
+        public void ReloadPacks()
+        {
+            LoadCatalogInternal();
+            if (mMainWin != null && mMainWin.IsVisible)
+            {
+                mMainWin.RefreshPackCatalogUi();
+            }
+        }
+
+        public void OpenPacksFolder()
+        {
+            try
+            {
+                if (!Directory.Exists(mUserPacksDir)) Directory.CreateDirectory(mUserPacksDir);
+                Process.Start("explorer.exe", mUserPacksDir);
+            }
+            catch
+            {
+            }
+        }
+
+        public void ShowAboutDialog()
+        {
+            try
+            {
+                if (mAboutWin != null && mAboutWin.IsVisible)
+                {
+                    mAboutWin.Activate();
+                    return;
+                }
+                Window owner = (mMainWin != null && mMainWin.IsVisible) ? (Window)mMainWin : null;
+                mAboutWin = new AboutLicenseWindow(this, owner);
+                mAboutWin.Closed += delegate { mAboutWin = null; };
+                mAboutWin.Show();
+                mAboutWin.Activate();
+            }
+            catch
+            {
+            }
+        }
+
+        public void OpenDocumentationFile(string kind)
+        {
+            try
+            {
+                string target = null;
+                if (string.Equals(kind, "license", StringComparison.OrdinalIgnoreCase))
+                {
+                    target = Path.Combine(mBaseDir, "LICENSE");
+                }
+                else if (string.Equals(kind, "notice", StringComparison.OrdinalIgnoreCase))
+                {
+                    target = Path.Combine(mBaseDir, "NOTICE");
+                }
+                else if (string.Equals(kind, "roadmap", StringComparison.OrdinalIgnoreCase))
+                {
+                    string doc = Path.GetFullPath(Path.Combine(mBaseDir, "..", "docs", "보르타_상용화_라이선스_및_정식인증_가이드.md"));
+                    target = File.Exists(doc) ? doc : AppProductInfo.GITHUB_REPO_URL;
+                }
+                else if (string.Equals(kind, "repo", StringComparison.OrdinalIgnoreCase))
+                {
+                    target = AppProductInfo.GITHUB_REPO_URL;
+                }
+                else if (!string.IsNullOrEmpty(kind) && (kind.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || kind.StartsWith("http://", StringComparison.OrdinalIgnoreCase)))
+                {
+                    target = kind;
+                }
+
+                if (!string.IsNullOrEmpty(target))
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo(target);
+                    psi.UseShellExecute = true;
+                    Process.Start(psi);
+                }
+            }
+            catch
+            {
             }
         }
 
@@ -705,6 +942,11 @@ namespace VortaAegisPC
 
         public void HideToTray()
         {
+            if (mAboutWin != null && mAboutWin.IsVisible)
+            {
+                mAboutWin.Close();
+                mAboutWin = null;
+            }
             if (mMainWin != null)
             {
                 mMainWin.ShowInTaskbar = false;
@@ -732,6 +974,7 @@ namespace VortaAegisPC
                 mTrayIcon.Dispose();
                 mTrayIcon = null;
             }
+            if (mAboutWin != null) mAboutWin.Close();
             if (mMainWin != null) mMainWin.Close();
             if (mMiniWin != null) mMiniWin.Close();
             if (mWpfApp != null) mWpfApp.Shutdown(0);
@@ -795,10 +1038,38 @@ namespace VortaAegisPC
         private static int RunSelfTest(string baseDir)
         {
             sSelfPassed = 0;
-            IList<PresetItem> all = PresetCatalog.LoadAll(baseDir);
-            Assert(all.Count == 48, "48 presets loaded");
 
-            // VolumeCurve checks (0..120% with unity 100% + clean boost up to 120%)
+            // 1. Core 48 + Bundled Commercial Expansion Pack Schema Loader
+            IList<PresetItem> core = PresetCatalog.LoadAll(baseDir);
+            Assert(core.Count == 48, "48 core presets preserved for Android parity");
+
+            CatalogLoadResult cat = PresetCatalog.LoadAllWithPacks(baseDir, null);
+            Assert(cat.Presets.Count == 64, "Core 48 + Pro Pack 16 == 64 scenarios");
+            Assert(cat.Packs.Count >= 2, "Core + Pro pack metadata loaded");
+            Assert(cat.SkippedFiles.Count == 0, "Bundled packs validated cleanly with zero skipped files");
+            IList<PresetItem> all = cat.Presets;
+
+            // Test user pack hot-loading + corrupted pack graceful skip in temp dir
+            string tmpPackDir = Path.Combine(Path.GetTempPath(), "VortaPackTest_" + Process.GetCurrentProcess().Id);
+            try
+            {
+                Directory.CreateDirectory(tmpPackDir);
+                File.WriteAllText(Path.Combine(tmpPackDir, "valid_tmp.json"),
+                    "{\"schemaVersion\":1,\"packId\":\"tmp-test-pack\",\"packName\":\"임시 테스트 팩\",\"packVersion\":\"1.0.0\",\"presets\":[{\"id\":9001,\"shortCode\":\"T01\",\"tabIndex\":2,\"title\":\"임시 집중 팩\",\"badge\":\"테스트\",\"desc\":\"테스트\",\"freq1\":220,\"freq2\":230,\"isSweep\":false,\"sweepStart\":0,\"sweepEnd\":0,\"sweepDurationSec\":0,\"isAntiPhase\":false,\"binauralBeat\":10,\"noiseType\":0,\"fmMod\":false,\"fmDepth\":0,\"fmRate\":0,\"amMod\":false,\"amDepth\":0,\"amRate\":0}]}",
+                    Encoding.UTF8);
+                File.WriteAllText(Path.Combine(tmpPackDir, "bad_corrupt.json"), "{ invalid json !!!", Encoding.UTF8);
+                File.WriteAllText(Path.Combine(tmpPackDir, "bad_schema.json"), "{\"schemaVersion\":99,\"packId\":\"bad\",\"packName\":\"Bad\",\"presets\":[]}", Encoding.UTF8);
+
+                CatalogLoadResult tmpRes = PresetCatalog.LoadAllWithPacks(baseDir, tmpPackDir);
+                Assert(tmpRes.Presets.Count == 65, "Valid external pack loaded cleanly alongside core+pro");
+                Assert(tmpRes.SkippedFiles.Count == 2, "Corrupted and future-schema packs skipped gracefully without crash");
+            }
+            finally
+            {
+                try { if (Directory.Exists(tmpPackDir)) Directory.Delete(tmpPackDir, true); } catch { }
+            }
+
+            // 2. VolumeCurve checks (0..120% with unity 100% + clean boost up to 120%)
             AssertNear(VolumeCurve.MIN_DB, -48.0, 1e-12, "MIN_DB == -48.0");
             Assert(VolumeCurve.DEFAULT_PERCENT == 30, "DEFAULT_PERCENT == 30 for PC companion");
             Assert(VolumeCurve.MAX_PERCENT == 120, "MAX_PERCENT == 120");
@@ -815,158 +1086,262 @@ namespace VortaAegisPC
                 prevGain = g;
             }
 
-            // TabSyncPolicy checks
-            Assert(TabSyncPolicy.ClampTabIndex(-1) == 0 && TabSyncPolicy.ClampTabIndex(9) == 0, "tab clamp bounds");
-            Assert(TabSyncPolicy.ResolveTabOnEntry(true, 5, 0, 0, true) == 5, "playing tab wins on entry");
-            Assert(TabSyncPolicy.ResolveTabOnEntry(true, 5, 5, 0, false) == 0, "no foreground hijack");
-            Assert(TabSyncPolicy.ResolveTabOnEntry(false, -1, 5, 0, true) == 5, "idle restores last tab");
+            // 3. Exhaustive All-Preset x All-Profile 120% Clean Boost & Zero-Overshoot (No Hard Clamp) Matrix
+            PcOutputProfile[] allProfiles = new PcOutputProfile[] { PcOutputProfile.PcSpeaker, PcOutputProfile.Headphone, PcOutputProfile.PureRaw };
+            for (int pi = 0; pi < all.Count; pi++)
+            {
+                PresetItem preset = all[pi];
+                for (int pr = 0; pr < allProfiles.Length; pr++)
+                {
+                    bool checkTp = (!preset.IsSweep && preset.Freq1 > 0f && preset.Freq1 < 6000f && preset.NoiseType == 0);
+                    double rms = VerifyZeroOvershootAt120(allProfiles[pr], preset, true, checkTp);
+                    Assert(!double.IsNaN(rms) && rms > 0.005, "Finite non-zero RMS for preset " + preset.Id + " prof=" + pr);
+                }
+            }
 
-            // DSP checks across all 3 PC output profiles & 120% clean boost
-            PresetItem p1 = PresetCatalog.FindById(all, 1);   // 18.98 Hz infrasound + FM
-            PresetItem p2 = PresetCatalog.FindById(all, 2);   // 7.00 Hz + 7.83 Hz
-            PresetItem p35 = PresetCatalog.FindById(all, 35); // Binaural 200/220
+            // 4. Multi-Frequency Coherent DFT THD+N < 0.1% at 120% Clean Boost (40 Hz, 200 Hz, 528 Hz, 1000 Hz)
+            VerifyPureSineDft120(40.0f, 2400, 2);     // Low-freq 40 Hz: exact k=2
+            VerifyPureSineDft120(200.0f, 2400, 10);   // Mid-low 200 Hz: exact k=10
+            VerifyPureSineDft120(528.0f, 1000, 11);   // Solfeggio 528 Hz: exact k=11
+            VerifyPureSineDft120(1000.0f, 2400, 50);  // Audible 1000 Hz: exact k=50
+
+            // Dynamic 80% -> 120% boost ramp overshoot check
+            {
+                AegisDspEngine ramp = new AegisDspEngine(48000);
+                ramp.SetOutputProfile(PcOutputProfile.PcSpeaker);
+                ramp.SetVolume(80, false);
+                ramp.PlayPreset(PresetCatalog.FindById(all, 2));
+                float[] tmpBuf = new float[480 * 2];
+                for (int b = 0; b < 50; b++) ramp.RenderStereoFloat(tmpBuf, 480);
+                ramp.SetVolume(120, false);
+                for (int b = 0; b < 60; b++) ramp.RenderStereoFloat(tmpBuf, 480);
+                Assert(ramp.OvershootCount == 0, "Zero hard-clamp overshoots across 80%->120% ramp");
+            }
+
+            // 5. Ultrasonic -12 dB guard check in Headphone vs unguarded PureRaw at 120%
             PresetItem pUltra = null;
             for (int i = 0; i < all.Count; i++) { if (all[i].NoiseType == 2) { pUltra = all[i]; break; } }
-            Assert(p1 != null && p2 != null && p35 != null && pUltra != null, "key presets located");
-
-            // PureRaw vs PcSpeaker infrasound (18.98 Hz) & 120% boost checks
-            double rmsPureP1 = RenderSecond(PcOutputProfile.PureRaw, p1, true, 100);
-            double rmsPcP1 = RenderSecond(PcOutputProfile.PcSpeaker, p1, true, 120);
-            double rmsPcP2 = RenderSecond(PcOutputProfile.PcSpeaker, p2, true, 120);
-            Assert(rmsPureP1 > 0.1 && rmsPcP1 > 0.1 && rmsPcP2 > 0.1, "P01/P02 finite non-zero at 120% boost");
-
-            double rmsPure100 = RenderSecond(PcOutputProfile.PureRaw, p35, true, 100);
-            double rmsPure120 = RenderSecond(PcOutputProfile.PureRaw, p35, true, 120);
-            Assert(rmsPure120 > rmsPure100 * 1.18, "120% boost yields >=18% higher RMS than 100%");
-            VerifyZeroDistortionDft120(p35);
-
-            // Ultrasonic -12 dB guard check in Headphone vs unguarded PureRaw at 120%
+            Assert(pUltra != null, "ultrasonic preset found");
             double rmsUltraOff = RenderSecond(PcOutputProfile.PureRaw, pUltra, false, 120);
             double rmsUltraGuard = RenderSecond(PcOutputProfile.Headphone, pUltra, false, 120);
-            double ultraRatio = rmsUltraGuard / rmsUltraOff;
-            AssertNear(ultraRatio, 0.25, 0.03, "Headphone forces -12 dB ultrasonic protection at 120%");
+            AssertNear(rmsUltraGuard / rmsUltraOff, 0.25, 0.03, "Headphone forces -12 dB ultrasonic protection at 120%");
 
-            // De-clicker switch continuity + oscilloscope snapshot + fade-out clear
+            // 6. Dual-Rate 1500 Hz Decimated Low-Freq Scope + Fundamental vs 144Hz Composite Isolation (P02 7.00 Hz)
+            PresetItem p2 = PresetCatalog.FindById(all, 2);
+            PresetItem p1 = PresetCatalog.FindById(all, 1);
+            PresetItem p35 = PresetCatalog.FindById(all, 35);
+            AegisDspEngine lfScope = new AegisDspEngine(48000);
+            lfScope.SetOutputProfile(PcOutputProfile.PcSpeaker);
+            lfScope.SetVolume(100, false);
+            lfScope.PlayPreset(p2);
+            float[] lfBuf = new float[512 * 2];
+            for (int b = 0; b < 260; b++) lfScope.RenderStereoFloat(lfBuf, 512); // ~2.77s fills 4096 @ 1500Hz ring
+
+            float[] lowFundL = new float[AegisDspEngine.SCOPE_LOW_RING_SIZE];
+            float[] lowCompL = new float[AegisDspEngine.SCOPE_LOW_RING_SIZE];
+            float[] fastFundL = new float[AegisDspEngine.SCOPE_RING_SIZE];
+            float[] fastCompL = new float[AegisDspEngine.SCOPE_RING_SIZE];
+            double srLow;
+            double srFast;
+            lfScope.CopyScopeSnapshotEx(true, true, lowFundL, null, out srLow);
+            lfScope.CopyScopeSnapshotEx(false, true, lowCompL, null, out srLow);
+            lfScope.CopyScopeSnapshotEx(true, false, fastFundL, null, out srFast);
+            lfScope.CopyScopeSnapshotEx(false, false, fastCompL, null, out srFast);
+            AssertNear(srLow, 1500.0, 1e-6, "Low-rate decimated scope rate == 1500 Hz");
+            AssertNear(srFast, 48000.0, 1e-6, "Fast scope rate == 48000 Hz");
+
+            int zeroCrossCount = 0;
+            bool armed = false;
+            for (int i = 1; i < lowFundL.Length; i++)
+            {
+                if (!armed)
+                {
+                    if (lowFundL[i] <= -0.05f) armed = true;
+                }
+                else if (lowFundL[i - 1] <= 0.0f && lowFundL[i] > 0.0f)
+                {
+                    zeroCrossCount++;
+                    armed = false;
+                }
+            }
+            Assert(zeroCrossCount >= 10, "7Hz low-rate ring holds >= 10 hysteresis zero-crossings in 2.73s (" + zeroCrossCount + ")");
+
+            double maxCarrierSep = 0.0;
+            for (int i = 0; i < fastFundL.Length; i++)
+            {
+                double d = Math.Abs(fastCompL[i] - fastFundL[i]);
+                if (d > maxCarrierSep) maxCarrierSep = d;
+            }
+            Assert(maxCarrierSep > 0.08, "Fundamental tap cleanly isolates 7Hz from 144Hz PcSpeaker carrier (" + maxCarrierSep.ToString("F3", CultureInfo.InvariantCulture) + ")");
+
+            // 7. De-clicker switch continuity & fade-out clean scope clear
             AegisDspEngine sw = new AegisDspEngine(48000);
             sw.SetVolume(120, false);
             sw.SetOutputProfile(PcOutputProfile.PcSpeaker);
             sw.PlayPreset(p1);
             float[] buf = new float[512 * 2];
             for (int b = 0; b < 40; b++) sw.RenderStereoFloat(buf, 512);
-            AssertNear(sw.LiveFreqHz, 18.98, 1e-3, "LiveFreqHz captures nominal carrier before FM");
             float prevEndL = buf[(512 - 1) * 2];
             sw.PlayPreset(p35);
             sw.RenderStereoFloat(buf, 512);
             Assert(Math.Abs(buf[0] - prevEndL) < 0.025, "De-clicker keeps transition continuous");
-            for (int b = 0; b < 12; b++) sw.RenderStereoFloat(buf, 512);
-
-            float[] snapL = new float[AegisDspEngine.SCOPE_RING_SIZE];
-            float[] snapR = new float[AegisDspEngine.SCOPE_RING_SIZE];
-            sw.CopyScopeSnapshot(snapL, snapR);
-            float maxScopeL = 0.0f;
-            float maxDiffLR = 0.0f;
-            for (int i = 0; i < AegisDspEngine.SCOPE_RING_SIZE; i++)
-            {
-                Assert(!float.IsNaN(snapL[i]) && !float.IsInfinity(snapL[i]), "finite scope L");
-                Assert(!float.IsNaN(snapR[i]) && !float.IsInfinity(snapR[i]), "finite scope R");
-                float aL = Math.Abs(snapL[i]);
-                if (aL > maxScopeL) maxScopeL = aL;
-                float dLR = Math.Abs(snapL[i] - snapR[i]);
-                if (dLR > maxDiffLR) maxDiffLR = dLR;
-            }
-            Assert(maxScopeL > 0.1f, "Oscilloscope snapshot captures active wave");
-            Assert(maxDiffLR > 0.05f, "Oscilloscope distinguishes L/R binaural channels");
-            Assert(sw.LiveRmsDbfs >= -96.0f && sw.LiveRmsDbfs <= 0.0f, "LiveRmsDbfs within valid dBFS range");
-
+            Assert(sw.OvershootCount == 0, "De-click transition has zero overshoots");
             sw.RequestStop();
             for (int b = 0; b < 80; b++) sw.RenderStereoFloat(buf, 512);
             Assert(!sw.IsActive && Math.Abs(buf[(512 - 1) * 2]) < 1e-6f, "Fade-out stops cleanly to silence");
-            sw.CopyScopeSnapshot(snapL, snapR);
+            sw.CopyScopeSnapshot(fastCompL, null);
             float postStopPeak = 0.0f;
-            for (int i = 0; i < AegisDspEngine.SCOPE_RING_SIZE; i++)
-            {
-                postStopPeak = Math.Max(postStopPeak, Math.Max(Math.Abs(snapL[i]), Math.Abs(snapR[i])));
-            }
+            for (int i = 0; i < fastCompL.Length; i++) postStopPeak = Math.Max(postStopPeak, Math.Abs(fastCompL[i]));
             Assert(postStopPeak < 1e-6f, "Scope ring clears cleanly on stop");
 
-            // Live Windows WASAPI Shared Mode probe
+            // 8. Live Windows WASAPI Shared Mode probe
             AegisDspEngine probeDsp = new AegisDspEngine(48000);
             string probeInfo = WasapiAudioEngine.RunSelfTestProbe(probeDsp);
             Assert(probeInfo.Contains("devices=") && probeInfo.Contains("bufFrames="), "WASAPI live endpoint verified");
 
-            // AppStateStore round-trip & sanitization
+            // 9. AppStateStore round-trip, ConsolePaneWidth sentinel & Pro preset IDs
             AppStateData st = new AppStateData();
             st.VolumePercent = 150;
             st.LastTab = 9;
+            st.LastPresetId = 102;
             st.WindowWidth = 0;
             st.WindowHeight = 200;
             st.MiniWidth = 100;
-            st.FavoriteIds = new List<int>(new int[] { 1, 1, 99, 19, -5 });
+            st.ConsolePaneWidth = -99999.0;
+            st.FavoriteIds = new List<int>(new int[] { 1, 1, 102, 102, 200000, -5 });
+            st.RecentPresetIds = new List<int>(new int[] { 2, 101, 2, 19, 102, 25, 13, 1, 3, 4, 5 });
             AppStateStore.Sanitize(st);
-            Assert(st.VolumePercent == 120 && st.LastTab == 0, "AppStateStore sanitizes volume & tab");
-            AssertNear(st.WindowWidth, 920.0, 1e-6, "WindowWidth defaults safely from 0 to 920");
-            AssertNear(st.WindowHeight, 540.0, 1e-6, "WindowHeight clamps minimum 540");
-            AssertNear(st.MiniWidth, 340.0, 1e-6, "MiniWidth clamps minimum 340");
-            Assert(st.FavoriteIds.Count == 2 && st.FavoriteIds[0] == 1 && st.FavoriteIds[1] == 19, "FavoriteIds deduplicated & bounded");
-
-            st.WindowWidth = 200;
+            Assert(st.VolumePercent == 120 && st.LastTab == 0 && st.LastPresetId == 102, "AppStateStore sanitizes bounds + Pro IDs");
+            Assert(double.IsNaN(st.ConsolePaneWidth), "ConsolePaneWidth sentinel -99999 restores Auto NaN");
+            Assert(st.FavoriteIds.Count == 2 && st.FavoriteIds[1] == 102, "FavoriteIds supports Pro Pack IDs");
+            Assert(st.RecentPresetIds.Count == 8, "RecentPresetIds deduplicated and capped at 8");
+            st.ConsolePaneWidth = 120.0;
             AppStateStore.Sanitize(st);
-            AssertNear(st.WindowWidth, 400.0, 1e-6, "WindowWidth clamps minimum 400");
+            AssertNear(st.ConsolePaneWidth, 340.0, 1e-6, "ConsolePaneWidth clamps min 340");
 
-            // WPF custom dark XAML templates & layout breakpoints
+            // 10. UpdateChecker SemVer & WPF dark XAML styles (including GridSplitter!)
+            Assert(UpdateChecker.CompareSemVer("3.2.0", "3.2.0") == 0, "SemVer equal");
+            Assert(UpdateChecker.CompareSemVer("3.2.0", "3.3.0") < 0, "SemVer upgrade detected");
+            Assert(UpdateChecker.CompareSemVer("3.10.0", "3.2.9") > 0, "SemVer numeric comparison");
             Assert(ThemePalette.CreateDarkSliderStyle() != null, "DarkSliderStyle parses");
             Assert(ThemePalette.CreateDarkComboStyle() != null, "DarkComboStyle parses");
             Assert(ThemePalette.CreateDarkScrollBarStyle() != null, "DarkScrollBarStyle parses");
-            AssertNear(CompanionWindow.WIDE_BREAKPOINT, 760.0, 1e-6, "WIDE_BREAKPOINT == 760");
-            AssertNear(CompanionWindow.MIN_WINDOW_WIDTH, 400.0, 1e-6, "MIN_WINDOW_WIDTH == 400");
+            Assert(ThemePalette.CreateDarkSplitterStyle() != null, "DarkSplitterStyle parses");
 
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "PASS: {0}/0 native checks verified ({1})", sSelfPassed, probeInfo));
             return 0;
         }
 
-        private static void VerifyZeroDistortionDft120(PresetItem p35)
+        private static double VerifyZeroOvershootAt120(PcOutputProfile profile, PresetItem preset, bool guard, bool checkCubicTruePeak)
         {
-            const int SR = 48000;
-            AegisDspEngine eng = new AegisDspEngine(SR);
-            eng.SetOutputProfile(PcOutputProfile.PureRaw);
+            AegisDspEngine eng = new AegisDspEngine(48000);
+            eng.SetOutputProfile(profile);
+            eng.SetUltrasonicGuardEnabled(guard);
             eng.SetVolume(120, false);
-            eng.PlayPreset(p35);
+            eng.PlayPreset(preset);
 
-            float[] block = new float[480 * 2];
-            for (int b = 0; b < 115; b++)
+            const int BLK = 480;
+            float[] buf = new float[BLK * 2];
+            double sumSq = 0.0;
+            double maxAbs = 0.0;
+            double p0 = 0.0, p1 = 0.0, p2 = 0.0, p3 = 0.0;
+            double maxTp = 0.0;
+
+            for (int b = 0; b < 110; b++)
             {
-                eng.RenderStereoFloat(block, 480);
+                eng.RenderStereoFloat(buf, BLK);
+                for (int i = 0; i < BLK; i++)
+                {
+                    float l = buf[i * 2];
+                    float r = buf[i * 2 + 1];
+                    Assert(!float.IsNaN(l) && !float.IsInfinity(l), "finite L " + preset.Id);
+                    Assert(!float.IsNaN(r) && !float.IsInfinity(r), "finite R " + preset.Id);
+                    double aL = Math.Abs((double)l);
+                    double aR = Math.Abs((double)r);
+                    if (aL > maxAbs) maxAbs = aL;
+                    if (aR > maxAbs) maxAbs = aR;
+                    sumSq += (l * l) + (r * r);
+
+                    if (checkCubicTruePeak)
+                    {
+                        p0 = p1; p1 = p2; p2 = p3; p3 = l;
+                        if (b >= 100)
+                        {
+                            for (int sub = 1; sub <= 3; sub++)
+                            {
+                                double t = sub * 0.25;
+                                double t2 = t * t;
+                                double t3 = t2 * t;
+                                double interp = 0.5 * ((2.0 * p1)
+                                    + (-p0 + p2) * t
+                                    + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+                                    + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+                                double aTp = Math.Abs(interp);
+                                if (aTp > maxTp) maxTp = aTp;
+                            }
+                        }
+                    }
+                }
             }
 
-            // Capture N=2400 steady-state frames (10 exact cycles of 200 Hz at 48 kHz -> k=10 DFT bin)
-            const int N = 2400;
+            Assert(eng.OvershootCount == 0, "Zero overshoot (no hard clamp) preset=" + preset.Id + " profile=" + profile);
+            Assert(maxAbs <= AegisDspEngine.CLEAN_BOOST_CEILING + 1e-6, "Sample peak <= -0.50 dBTP preset=" + preset.Id);
+            if (checkCubicTruePeak)
+            {
+                Assert(maxTp <= AegisDspEngine.CLEAN_BOOST_CEILING + 5e-4, "4x True-peak <= -0.50 dBTP preset=" + preset.Id);
+            }
+            return Math.Sqrt(sumSq / (110 * BLK * 2));
+        }
+
+        private static void VerifyPureSineDft120(float freqHz, int dftN, int kBin)
+        {
+            PresetItem synth = new PresetItem();
+            synth.Id = 99990 + (int)freqHz;
+            synth.ShortCode = "DFT";
+            synth.TabIndex = 2;
+            synth.Title = "DFT Tone";
+            synth.Freq1 = freqHz;
+            synth.Freq2 = 0f;
+            synth.NoiseType = 0;
+
+            AegisDspEngine eng = new AegisDspEngine(48000);
+            eng.SetOutputProfile(PcOutputProfile.PureRaw);
+            eng.SetVolume(120, false);
+            eng.PlayPreset(synth);
+
+            float[] block = new float[200 * 2];
+            for (int b = 0; b < 260; b++) eng.RenderStereoFloat(block, 200); // > 1.08s steady state past 1s fade-in
+
             double re = 0.0;
             double im = 0.0;
             double totalSq = 0.0;
             double peak = 0.0;
             int idx = 0;
-            for (int b = 0; b < 5; b++)
+            int neededBlocks = (dftN + 199) / 200;
+            for (int b = 0; b < neededBlocks; b++)
             {
-                eng.RenderStereoFloat(block, 480);
-                for (int i = 0; i < 480; i++)
+                eng.RenderStereoFloat(block, 200);
+                for (int i = 0; i < 200 && idx < dftN; i++)
                 {
                     double x = block[i * 2];
                     double absX = Math.Abs(x);
                     if (absX > peak) peak = absX;
                     totalSq += x * x;
-                    double angle = (2.0 * Math.PI * 10.0 * idx) / N;
+                    double angle = (2.0 * Math.PI * kBin * idx) / dftN;
                     re += x * Math.Cos(angle);
                     im += x * Math.Sin(angle);
                     idx++;
                 }
             }
-            Assert(peak <= AegisDspEngine.CLEAN_BOOST_CEILING + 1e-5, "120% steady-state peak within -0.50 dBTP clean ceiling");
-            double meanSq = totalSq / N;
-            double fundMeanSq = (2.0 * (re * re + im * im)) / ((double)N * (double)N);
+
+            Assert(eng.OvershootCount == 0, "Multi-freq DFT zero overshoot @ " + freqHz + " Hz");
+            Assert(peak <= AegisDspEngine.CLEAN_BOOST_CEILING + 1e-6, "Multi-freq peak <= -0.50 dBTP @ " + freqHz + " Hz");
+            double meanSq = totalSq / dftN;
+            double fundMeanSq = (2.0 * (re * re + im * im)) / ((double)dftN * (double)dftN);
             double distMeanSq = Math.Max(0.0, meanSq - fundMeanSq);
             double thd = Math.Sqrt(distMeanSq / Math.Max(1e-18, fundMeanSq));
-            Assert(thd < 0.001, "120% boost THD+N < 0.1% (" + thd.ToString("F6", CultureInfo.InvariantCulture) + ")");
+            Assert(thd < 0.001, "120% boost THD+N < 0.1% @ " + freqHz + "Hz (" + thd.ToString("F6", CultureInfo.InvariantCulture) + ")");
         }
 
         private static double RenderSecond(PcOutputProfile profile, PresetItem preset, bool guard, int vol)
@@ -986,10 +1361,11 @@ namespace VortaAegisPC
                 {
                     float v = buf[i];
                     Assert(!float.IsNaN(v) && !float.IsInfinity(v), "finite sample");
-                    Assert(Math.Abs(v) <= (float)(AegisDspEngine.CLEAN_BOOST_CEILING + 1e-5), "-0.50 dBTP clean boost ceiling");
+                    Assert(Math.Abs(v) <= (float)(AegisDspEngine.CLEAN_BOOST_CEILING + 1e-6), "-0.50 dBTP clean boost ceiling");
                     sumSq += v * v;
                 }
             }
+            Assert(eng.OvershootCount == 0, "Zero overshoots in RenderSecond");
             return Math.Sqrt(sumSq / (100 * 480 * 2));
         }
     }

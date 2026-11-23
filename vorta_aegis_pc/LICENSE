@@ -1,0 +1,60 @@
+Copyright (c) 2026 gyeomsVibe (김윤겸). All Rights Reserved.
+
+Vorta Reso & Vorta Aegis Suite — Proprietary Commercial & Evaluation License (v1.0)
+
+1. Ownership & Copyright.
+   All components of this Software — including source code, C#/Java/Python
+   DSP engines, Windows native executables (.exe), Android packages (.apk),
+   preset catalogs, modular expansion packs (packs/*.json), icons, UX layouts,
+   and documentation (collectively, the "Software") — are the exclusive
+   intellectual property of gyeomsVibe (김윤겸), protected under the Copyright
+   Act of the Republic of Korea and international treaties (Berne Convention).
+
+2. Trademark Reservation.
+   "Vorta", "Vorta Reso", "Vorta Aegis", "보르타", and "보르타 이지스" along
+   with the shield-sine emblem are proprietary product identifiers owned by
+   the copyright holder. No trademark rights are granted by this License.
+
+3. Permitted Evaluation Use (Unlicensed Repository Viewers).
+   You may view the repository and build/run a local copy solely for private
+   non-commercial evaluation or an authorized demonstration approved by the
+   copyright holder.
+
+4. Commercial License & Restrictions (Prior Written / Paid License Required).
+   Without an active paid commercial seat or prior written agreement from the
+   copyright holder, you may NOT:
+   a. copy, modify, fork, rebrand, translate, or create derivative works;
+   b. distribute, sublicense, sell, rent, lease, bundle, or publicly host the
+      Software, built executables (.exe/.apk), or JSON preset packs;
+   c. use the Software or expansion packs in commercial studios, clinics,
+      SaaS offerings, or paid client environments;
+   d. decompile, reverse engineer, or strip licensing/metadata notices except
+      as expressly permitted by mandatory applicable law.
+
+5. Clean-Room & Third-Party Boundary.
+   Vorta Aegis Pro PC runs solely on standard Windows .NET Framework 4.8 and
+   Windows Core Audio (WASAPI) COM interfaces provided by the host OS, with
+   zero third-party copyleft (GPL/LGPL) runtime dependencies.
+
+6. Non-Medical Device Notice.
+   This Software is a general wellness, focus, and ambient acoustic utility.
+   It is NOT a medical device and makes no claims to diagnose, treat, cure,
+   or prevent any disease or medical condition.
+
+7. No Warranty & Limitation of Liability.
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. TO THE
+   MAXIMUM EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER SHALL NOT BE LIABLE
+   FOR ANY DAMAGE TO SPEAKERS, AMPLIFIERS, HEADPHONES, COMPUTERS, MOBILE
+   DEVICES, HEARING, OR DATA ARISING FROM USE OF THE SOFTWARE.
+
+8. Governing Law & Commercial Inquiries.
+   Governed by the laws of the Republic of Korea.
+   Contact: yoongyeomkim@naver.com · GitHub: https://github.com/gyeomsVibe
+
+---
+[한국어 요약 — 법적 해석은 위 영문 조항이 우선]
+- 저작권자: gyeomsVibe(김윤겸). 모든 권리를 보유하며 오픈소스(MIT/GPL 등)가 아닙니다.
+- 브랜드/상표 유보: Vorta, Vorta Reso, Vorta Aegis, 보르타 이지스 명칭 및 방패-파동 로고 권리는 저작권자에게 귀속됩니다.
+- 허용 범위: 비영리 개인 평가 목적의 열람 및 로컬 빌드/실행에 한합니다.
+- 상업 이용·수정·재배포 금지: 서면 허가 또는 정식 라이선스 구매 없이 복제, 개작, 재배포, 재판매, 상업적 제공, 역설계를 금지합니다.
+- 비의료기기 및 면책: 일반 집중·휴식·환경음 보조 유틸리티이며, 의료적 효능을 주장하지 않습니다.

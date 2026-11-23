@@ -17,6 +17,8 @@ namespace VortaAegisPC
         public const double MAX_AMP_NORM = CLEAN_BOOST_CEILING;
         public const double UNITY_HEADROOM_SCALE = CLEAN_BOOST_CEILING / VolumeCurve.MAX_BOOST_LINEAR;
         public const int SCOPE_RING_SIZE = 4096;
+        public const int SCOPE_LOW_DECIM = 32; // 48000 / 32 = 1500 Hz -> 2.73s window for low frequencies
+        public const int SCOPE_LOW_RING_SIZE = 4096;
 
         private int mSampleRate = 48000;
         private double mFadeInStep;
@@ -24,6 +26,7 @@ namespace VortaAegisPC
         private double mGainSmoothAlpha;
         private double mDeclickDecay;
         private double mLimReleaseAlpha;
+        private double mTinnitusLpAlpha;
 
         private readonly object mCmdLock = new object();
         private volatile bool mActive;
@@ -43,6 +46,7 @@ namespace VortaAegisPC
         private float mLiveRmsDbfs = -96.0f;
         private float mSweepProgress = 0.0f;
         private volatile float mLimiterGrDb = 0.0f;
+        private long mOvershootCount = 0;
 
         private double mPhaseL;
         private double mPhaseR;
@@ -54,6 +58,12 @@ namespace VortaAegisPC
         private double mB0;
         private double mB1;
         private double mB2;
+        private double mBrownL;
+        private double mBrownR;
+        private double mTinB0L;
+        private double mTinB1L;
+        private double mTinB0R;
+        private double mTinB1R;
         private uint mRngState = 0x51A7F319u;
 
         private double mSmoothedGain;
@@ -69,11 +79,29 @@ namespace VortaAegisPC
 
         private readonly float[] mScopeRingL = new float[SCOPE_RING_SIZE];
         private readonly float[] mScopeRingR = new float[SCOPE_RING_SIZE];
+        private readonly float[] mScopeFundRingL = new float[SCOPE_RING_SIZE];
+        private readonly float[] mScopeFundRingR = new float[SCOPE_RING_SIZE];
+        private readonly float[] mLowOutRingL = new float[SCOPE_LOW_RING_SIZE];
+        private readonly float[] mLowOutRingR = new float[SCOPE_LOW_RING_SIZE];
+        private readonly float[] mLowFundRingL = new float[SCOPE_LOW_RING_SIZE];
+        private readonly float[] mLowFundRingR = new float[SCOPE_LOW_RING_SIZE];
         private readonly object mScopeLock = new object();
         private int mScopeWritePos = 0;
+        private int mLowWritePos = 0;
         private volatile bool mScopeHasData = false;
+        private double mDecimAccOutL = 0.0;
+        private double mDecimAccOutR = 0.0;
+        private double mDecimAccFundL = 0.0;
+        private double mDecimAccFundR = 0.0;
+        private int mDecimCount = 0;
         private float[] mBlockScopeL = new float[2048];
         private float[] mBlockScopeR = new float[2048];
+        private float[] mBlockFundL = new float[2048];
+        private float[] mBlockFundR = new float[2048];
+        private float[] mBlockLowOutL = new float[256];
+        private float[] mBlockLowOutR = new float[256];
+        private float[] mBlockLowFundL = new float[256];
+        private float[] mBlockLowFundR = new float[256];
 
         public AegisDspEngine(int sampleRate)
         {
@@ -90,6 +118,7 @@ namespace VortaAegisPC
             mGainSmoothAlpha = 1.0 - Math.Exp(-1.0 / (0.015 * sr));
             mDeclickDecay = Math.Pow(0.993, 48000.0 / sr);
             mLimReleaseAlpha = 1.0 - Math.Exp(-1.0 / (0.180 * sr));
+            mTinnitusLpAlpha = 1.0 - Math.Exp(-TWO_PI * 2800.0 / sr);
         }
 
         public int SampleRate { get { return mSampleRate; } }
@@ -102,32 +131,86 @@ namespace VortaAegisPC
         public float LiveRmsDbfs { get { return mActive ? mLiveRmsDbfs : -96.0f; } }
         public float SweepProgress { get { return IsPlaying ? mSweepProgress : 0.0f; } }
         public float LimiterGainReductionDb { get { return mActive ? mLimiterGrDb : 0.0f; } }
+        public long OvershootCount { get { return mOvershootCount; } }
         public bool IsUltrasonicGuarded { get { return IsPlaying && mUltrasonicGuarded; } }
         public PcOutputProfile OutputProfile { get { return mOutputProfile; } }
         public bool UltrasonicGuardEnabled { get { return mUltrasonicGuardEnabled; } }
         public int VolumePercent { get { return mVolumePercent; } }
         public bool IsMuted { get { return mIsMuted; } }
 
+        public bool IsPcCompensationActive
+        {
+            get
+            {
+                PresetItem p = mCurrentPreset;
+                if (!IsPlaying || p == null || p.NoiseType == 2) return false;
+                double f = mLiveFreqHz > 0f ? mLiveFreqHz : (p.IsSweep ? p.SweepStart : p.Freq1);
+                if (mOutputProfile == PcOutputProfile.PcSpeaker)
+                {
+                    return (f > 0.0 && f < 85.0) || (p.BinauralBeat > 0f);
+                }
+                if (mOutputProfile == PcOutputProfile.Headphone)
+                {
+                    return (f > 0.0 && f < 28.0);
+                }
+                return false;
+            }
+        }
+
         public void CopyScopeSnapshot(float[] destL, float[] destR)
         {
+            double dummySr;
+            CopyScopeSnapshotEx(false, false, destL, destR, out dummySr);
+        }
+
+        public void CopyScopeSnapshotEx(bool fundamentalTap, bool lowRate, float[] destL, float[] destR, out double effectiveSampleRate)
+        {
+            effectiveSampleRate = lowRate ? (mSampleRate / (double)SCOPE_LOW_DECIM) : (double)mSampleRate;
             if (destL == null && destR == null) return;
             lock (mScopeLock)
             {
-                int wp = mScopeWritePos;
-                if (destL != null)
+                if (lowRate)
                 {
-                    int lenL = Math.Min(destL.Length, SCOPE_RING_SIZE);
-                    for (int i = 0; i < lenL; i++)
+                    float[] srcL = fundamentalTap ? mLowFundRingL : mLowOutRingL;
+                    float[] srcR = fundamentalTap ? mLowFundRingR : mLowOutRingR;
+                    int wp = mLowWritePos;
+                    if (destL != null)
                     {
-                        destL[i] = mScopeRingL[(wp + i) % SCOPE_RING_SIZE];
+                        int lenL = Math.Min(destL.Length, SCOPE_LOW_RING_SIZE);
+                        for (int i = 0; i < lenL; i++)
+                        {
+                            destL[i] = srcL[(wp + i) % SCOPE_LOW_RING_SIZE];
+                        }
+                    }
+                    if (destR != null)
+                    {
+                        int lenR = Math.Min(destR.Length, SCOPE_LOW_RING_SIZE);
+                        for (int i = 0; i < lenR; i++)
+                        {
+                            destR[i] = srcR[(wp + i) % SCOPE_LOW_RING_SIZE];
+                        }
                     }
                 }
-                if (destR != null)
+                else
                 {
-                    int lenR = Math.Min(destR.Length, SCOPE_RING_SIZE);
-                    for (int i = 0; i < lenR; i++)
+                    float[] srcL = fundamentalTap ? mScopeFundRingL : mScopeRingL;
+                    float[] srcR = fundamentalTap ? mScopeFundRingR : mScopeRingR;
+                    int wp = mScopeWritePos;
+                    if (destL != null)
                     {
-                        destR[i] = mScopeRingR[(wp + i) % SCOPE_RING_SIZE];
+                        int lenL = Math.Min(destL.Length, SCOPE_RING_SIZE);
+                        for (int i = 0; i < lenL; i++)
+                        {
+                            destL[i] = srcL[(wp + i) % SCOPE_RING_SIZE];
+                        }
+                    }
+                    if (destR != null)
+                    {
+                        int lenR = Math.Min(destR.Length, SCOPE_RING_SIZE);
+                        for (int i = 0; i < lenR; i++)
+                        {
+                            destR[i] = srcR[(wp + i) % SCOPE_RING_SIZE];
+                        }
                     }
                 }
             }
@@ -178,6 +261,7 @@ namespace VortaAegisPC
                     mLimGain = 1.0;
                     mLimiterGrDb = 0.0f;
                     mLiveRmsDbfs = -96.0f;
+                    mOvershootCount = 0;
                     double initGain = mUltrasonicGuarded ? (mTargetLinearGain * 0.25) : mTargetLinearGain;
                     mSmoothedGain = mIsMuted ? 0.0 : initGain;
                     mLastPresetId = -1;
@@ -185,6 +269,13 @@ namespace VortaAegisPC
                     mPrevRawR = 0.0;
                     mDeclickL = 0.0;
                     mDeclickR = 0.0;
+                    mB0 = 0.0; mB1 = 0.0; mB2 = 0.0;
+                    mBrownL = 0.0; mBrownR = 0.0;
+                    mTinB0L = 0.0; mTinB1L = 0.0;
+                    mTinB0R = 0.0; mTinB1R = 0.0;
+                    mDecimAccOutL = 0.0; mDecimAccOutR = 0.0;
+                    mDecimAccFundL = 0.0; mDecimAccFundR = 0.0;
+                    mDecimCount = 0;
                 }
             }
         }
@@ -217,6 +308,27 @@ namespace VortaAegisPC
             return (x / 2147483647.5) - 1.0;
         }
 
+        private void ClearScopeRings()
+        {
+            lock (mScopeLock)
+            {
+                Array.Clear(mScopeRingL, 0, SCOPE_RING_SIZE);
+                Array.Clear(mScopeRingR, 0, SCOPE_RING_SIZE);
+                Array.Clear(mScopeFundRingL, 0, SCOPE_RING_SIZE);
+                Array.Clear(mScopeFundRingR, 0, SCOPE_RING_SIZE);
+                Array.Clear(mLowOutRingL, 0, SCOPE_LOW_RING_SIZE);
+                Array.Clear(mLowOutRingR, 0, SCOPE_LOW_RING_SIZE);
+                Array.Clear(mLowFundRingL, 0, SCOPE_LOW_RING_SIZE);
+                Array.Clear(mLowFundRingR, 0, SCOPE_LOW_RING_SIZE);
+                mScopeWritePos = 0;
+                mLowWritePos = 0;
+                mScopeHasData = false;
+            }
+            mDecimAccOutL = 0.0; mDecimAccOutR = 0.0;
+            mDecimAccFundL = 0.0; mDecimAccFundR = 0.0;
+            mDecimCount = 0;
+        }
+
         public bool RenderStereoFloat(float[] outInterleaved, int frameCount)
         {
             if (outInterleaved == null || frameCount <= 0) return false;
@@ -234,13 +346,7 @@ namespace VortaAegisPC
                 mLimiterGrDb = 0.0f;
                 if (mScopeHasData)
                 {
-                    lock (mScopeLock)
-                    {
-                        Array.Clear(mScopeRingL, 0, SCOPE_RING_SIZE);
-                        Array.Clear(mScopeRingR, 0, SCOPE_RING_SIZE);
-                        mScopeWritePos = 0;
-                        mScopeHasData = false;
-                    }
+                    ClearScopeRings();
                 }
                 return false;
             }
@@ -249,6 +355,16 @@ namespace VortaAegisPC
             {
                 mBlockScopeL = new float[frameCount];
                 mBlockScopeR = new float[frameCount];
+                mBlockFundL = new float[frameCount];
+                mBlockFundR = new float[frameCount];
+            }
+            int neededLow = (frameCount / SCOPE_LOW_DECIM) + 2;
+            if (mBlockLowOutL.Length < neededLow)
+            {
+                mBlockLowOutL = new float[neededLow];
+                mBlockLowOutR = new float[neededLow];
+                mBlockLowFundL = new float[neededLow];
+                mBlockLowFundR = new float[neededLow];
             }
 
             PcOutputProfile profile = mOutputProfile;
@@ -261,6 +377,7 @@ namespace VortaAegisPC
             double blockPeak = 0.0;
             double sumSq = 0.0;
             int writtenFrames = 0;
+            int writtenLow = 0;
 
             for (int i = 0; i < frameCount; i++)
             {
@@ -353,14 +470,15 @@ namespace VortaAegisPC
                     sampleR = Math.Sin(mPhaseR);
                 }
 
-                // Noise / Flutter synthesis modes
+                // Noise / Flutter synthesis modes (all strictly bounded in [-1.0, 1.0])
                 if (p.NoiseType == 1)
                 {
                     double white = NextWhiteNoise();
                     mB0 = 0.99765 * mB0 + white * 0.0990460;
                     mB1 = 0.96300 * mB1 + white * 0.2965164;
                     mB2 = 0.57000 * mB2 + white * 1.0526913;
-                    double pink = (mB0 + mB1 + mB2 + white * 0.1848) * 0.12;
+                    double pinkRaw = (mB0 + mB1 + mB2 + white * 0.1848) * 0.12;
+                    double pink = Math.Tanh(pinkRaw * 0.85);
                     sampleL = sampleL * 0.85 + pink * 0.15;
                     sampleR = sampleR * 0.85 + pink * 0.15;
                 }
@@ -371,28 +489,74 @@ namespace VortaAegisPC
                     sampleL *= flutter;
                     sampleR *= flutter;
                 }
+                else if (p.NoiseType == 4)
+                {
+                    // Warm stereo 1/f^2 Brown noise masking
+                    double wL = NextWhiteNoise();
+                    double wR = NextWhiteNoise();
+                    mBrownL = 0.996 * mBrownL + wL * 0.045;
+                    mBrownR = 0.996 * mBrownR + wR * 0.045;
+                    double bL = Math.Tanh(mBrownL * 1.15);
+                    double bR = Math.Tanh(mBrownR * 1.15);
+                    if (!p.IsSweep && p.Freq1 <= 0f)
+                    {
+                        sampleL = bL * 0.90;
+                        sampleR = bR * 0.90;
+                    }
+                    else
+                    {
+                        sampleL = sampleL * 0.42 + bL * 0.56;
+                        sampleR = sampleR * 0.42 + bR * 0.56;
+                    }
+                }
+                else if (p.NoiseType == 5)
+                {
+                    // Warm band-shaped Tinnitus / Speech relief masking (~2.8kHz rolloff)
+                    double wL = NextWhiteNoise();
+                    double wR = NextWhiteNoise();
+                    mTinB0L = 0.988 * mTinB0L + wL * 0.085;
+                    mTinB1L = mTinB1L + mTinnitusLpAlpha * ((mTinB0L + wL * 0.06) - mTinB1L);
+                    mTinB0R = 0.988 * mTinB0R + wR * 0.085;
+                    mTinB1R = mTinB1R + mTinnitusLpAlpha * ((mTinB0R + wR * 0.06) - mTinB1R);
+                    double tL = Math.Tanh(mTinB1L * 0.95);
+                    double tR = Math.Tanh(mTinB1R * 0.95);
+                    if (!p.IsSweep && p.Freq1 <= 0f)
+                    {
+                        sampleL = tL * 0.88;
+                        sampleR = tR * 0.88;
+                    }
+                    else
+                    {
+                        sampleL = sampleL * 0.35 + tL * 0.62;
+                        sampleR = sampleR * 0.35 + tR * 0.62;
+                    }
+                }
+
+                // Capture clean pre-compensation fundamental wave tap (with AM envelope)
+                double fundL = sampleL * amGain;
+                double fundR = sampleR * amGain;
 
                 // PC Output Acoustic Profile Compensation (Missing Fundamental & Carrier Assist)
                 if (p.NoiseType != 2)
                 {
                     if (profile == PcOutputProfile.PcSpeaker)
                     {
-                        if (fL < 32.0)
+                        if (fL > 0.0 && fL < 32.0)
                         {
                             mCarrierPhase += (TWO_PI * 144.0) / sr;
                             if (mCarrierPhase > TWO_PI) mCarrierPhase -= TWO_PI;
-                            double carrierWave = Math.Sin(mCarrierPhase) + 0.12 * Math.Sin(2.0 * mCarrierPhase);
+                            double carrierWave = (Math.Sin(mCarrierPhase) + 0.12 * Math.Sin(2.0 * mCarrierPhase)) / 1.12;
                             double envL = 0.5 + 0.5 * Math.Sin(mPhaseL);
                             double envR = (p.BinauralBeat > 0f) ? (0.5 + 0.5 * Math.Sin(mPhaseR)) : envL;
-                            sampleL = sampleL * 0.78 + carrierWave * envL * 0.26;
-                            sampleR = sampleR * 0.78 + carrierWave * envR * 0.26;
+                            sampleL = sampleL * 0.72 + carrierWave * envL * 0.24;
+                            sampleR = sampleR * 0.72 + carrierWave * envR * 0.24;
                         }
-                        else if (fL < 85.0)
+                        else if (fL >= 32.0 && fL < 85.0)
                         {
                             double hL = 0.28 * Math.Sin(2.0 * mPhaseL) + 0.14 * Math.Sin(3.0 * mPhaseL);
                             double hR = 0.28 * Math.Sin(2.0 * mPhaseR) + 0.14 * Math.Sin(3.0 * mPhaseR);
-                            sampleL = (sampleL + hL) * 0.78;
-                            sampleR = (sampleR + hR) * 0.78;
+                            sampleL = (sampleL + hL) * 0.70;
+                            sampleR = (sampleR + hR) * 0.70;
                         }
 
                         if (p.BinauralBeat > 0f)
@@ -404,13 +568,13 @@ namespace VortaAegisPC
                             sampleR *= pulse;
                         }
                     }
-                    else if (profile == PcOutputProfile.Headphone && fL < 28.0)
+                    else if (profile == PcOutputProfile.Headphone && fL > 0.0 && fL < 28.0)
                     {
                         mCarrierPhase += (TWO_PI * 128.0) / sr;
                         if (mCarrierPhase > TWO_PI) mCarrierPhase -= TWO_PI;
                         double gentleCarrier = Math.Sin(mCarrierPhase) * (0.5 + 0.5 * Math.Sin(mPhaseL));
-                        sampleL = sampleL * 0.88 + gentleCarrier * 0.16;
-                        sampleR = sampleR * 0.88 + gentleCarrier * 0.16;
+                        sampleL = sampleL * 0.84 + gentleCarrier * 0.15;
+                        sampleR = sampleR * 0.84 + gentleCarrier * 0.15;
                     }
                 }
 
@@ -467,24 +631,28 @@ namespace VortaAegisPC
 
                 double requestedGain = mSmoothedGain * envGain * UNITY_HEADROOM_SCALE;
                 double instPeak = Math.Max(Math.Abs(sampleL), Math.Abs(sampleR)) * requestedGain;
-                if (instPeak > CLEAN_BOOST_CEILING)
+                const double LIM_CEIL = CLEAN_BOOST_CEILING * 0.99999; // margin against float32 rounding, zero hard clamp
+                if (instPeak > LIM_CEIL)
                 {
-                    double needed = CLEAN_BOOST_CEILING / instPeak;
+                    double needed = LIM_CEIL / instPeak;
                     if (needed < mLimGain) mLimGain = needed;
                 }
                 else if (mLimGain < 1.0)
                 {
-                    mLimGain += mLimReleaseAlpha * (1.0 - mLimGain);
-                    if (mLimGain > 1.0) mLimGain = 1.0;
+                    double candidate = mLimGain + mLimReleaseAlpha * (1.0 - mLimGain);
+                    if (candidate > 1.0) candidate = 1.0;
+                    if (instPeak * candidate <= LIM_CEIL) mLimGain = candidate;
                 }
 
                 double totalGain = requestedGain * mLimGain;
                 double vL = sampleL * totalGain;
                 double vR = sampleR * totalGain;
-                if (vL > CLEAN_BOOST_CEILING) vL = CLEAN_BOOST_CEILING;
-                else if (vL < -CLEAN_BOOST_CEILING) vL = -CLEAN_BOOST_CEILING;
-                if (vR > CLEAN_BOOST_CEILING) vR = CLEAN_BOOST_CEILING;
-                else if (vR < -CLEAN_BOOST_CEILING) vR = -CLEAN_BOOST_CEILING;
+                if (double.IsNaN(vL) || double.IsInfinity(vL)) vL = 0.0;
+                if (double.IsNaN(vR) || double.IsInfinity(vR)) vR = 0.0;
+                if (Math.Abs(vL) > CLEAN_BOOST_CEILING || Math.Abs(vR) > CLEAN_BOOST_CEILING)
+                {
+                    mOvershootCount++;
+                }
 
                 outInterleaved[i * 2] = (float)vL;
                 outInterleaved[i * 2 + 1] = (float)vR;
@@ -493,14 +661,34 @@ namespace VortaAegisPC
                 double boostVis = (mVolumePercent > VolumeCurve.UNITY_PERCENT)
                     ? (0.84 + 0.12 * ((mVolumePercent - VolumeCurve.UNITY_PERCENT) / 20.0))
                     : 0.82;
-                double scopeScale = mIsMuted ? 0.0 : (envGain * (guard ? 0.48 : boostVis));
-                double scL = sampleL * scopeScale;
-                double scR = sampleR * scopeScale;
-                if (scL > 1.0) scL = 1.0; else if (scL < -1.0) scL = -1.0;
-                if (scR > 1.0) scR = 1.0; else if (scR < -1.0) scR = -1.0;
+                double scopeScale = mIsMuted ? 0.0 : (envGain * (guard ? 0.48 : boostVis) * mLimGain);
+                double scL = Math.Max(-1.0, Math.Min(1.0, sampleL * scopeScale));
+                double scR = Math.Max(-1.0, Math.Min(1.0, sampleR * scopeScale));
+                double scFundL = Math.Max(-1.0, Math.Min(1.0, fundL * scopeScale));
+                double scFundR = Math.Max(-1.0, Math.Min(1.0, fundR * scopeScale));
                 mBlockScopeL[i] = (float)scL;
                 mBlockScopeR[i] = (float)scR;
+                mBlockFundL[i] = (float)scFundL;
+                mBlockFundR[i] = (float)scFundR;
                 writtenFrames = i + 1;
+
+                mDecimAccOutL += scL;
+                mDecimAccOutR += scR;
+                mDecimAccFundL += scFundL;
+                mDecimAccFundR += scFundR;
+                mDecimCount++;
+                if (mDecimCount >= SCOPE_LOW_DECIM)
+                {
+                    double invDec = 1.0 / SCOPE_LOW_DECIM;
+                    mBlockLowOutL[writtenLow] = (float)(mDecimAccOutL * invDec);
+                    mBlockLowOutR[writtenLow] = (float)(mDecimAccOutR * invDec);
+                    mBlockLowFundL[writtenLow] = (float)(mDecimAccFundL * invDec);
+                    mBlockLowFundR[writtenLow] = (float)(mDecimAccFundR * invDec);
+                    writtenLow++;
+                    mDecimAccOutL = 0.0; mDecimAccOutR = 0.0;
+                    mDecimAccFundL = 0.0; mDecimAccFundR = 0.0;
+                    mDecimCount = 0;
+                }
 
                 double absMax = Math.Max(Math.Abs(vL), Math.Abs(vR));
                 if (absMax > blockPeak) blockPeak = absMax;
@@ -534,13 +722,7 @@ namespace VortaAegisPC
             {
                 if (mScopeHasData)
                 {
-                    lock (mScopeLock)
-                    {
-                        Array.Clear(mScopeRingL, 0, SCOPE_RING_SIZE);
-                        Array.Clear(mScopeRingR, 0, SCOPE_RING_SIZE);
-                        mScopeWritePos = 0;
-                        mScopeHasData = false;
-                    }
+                    ClearScopeRings();
                 }
             }
             else if (writtenFrames > 0)
@@ -551,8 +733,19 @@ namespace VortaAegisPC
                     {
                         mScopeRingL[mScopeWritePos] = mBlockScopeL[k];
                         mScopeRingR[mScopeWritePos] = mBlockScopeR[k];
+                        mScopeFundRingL[mScopeWritePos] = mBlockFundL[k];
+                        mScopeFundRingR[mScopeWritePos] = mBlockFundR[k];
                         mScopeWritePos++;
                         if (mScopeWritePos >= SCOPE_RING_SIZE) mScopeWritePos = 0;
+                    }
+                    for (int k = 0; k < writtenLow; k++)
+                    {
+                        mLowOutRingL[mLowWritePos] = mBlockLowOutL[k];
+                        mLowOutRingR[mLowWritePos] = mBlockLowOutR[k];
+                        mLowFundRingL[mLowWritePos] = mBlockLowFundL[k];
+                        mLowFundRingR[mLowWritePos] = mBlockLowFundR[k];
+                        mLowWritePos++;
+                        if (mLowWritePos >= SCOPE_LOW_RING_SIZE) mLowWritePos = 0;
                     }
                     mScopeHasData = true;
                 }

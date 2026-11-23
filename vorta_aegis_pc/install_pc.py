@@ -48,7 +48,7 @@ foreach ($lnkPath in $targets) {{
     $sc.Arguments = ''
     $sc.WorkingDirectory = '{PC_DIR}'
     $sc.IconLocation = '{ICO_PATH},0'
-    $sc.Description = '보르타 이지스 Pro v3.1 PC (자유 리사이즈 · 백그라운드 상주 · WASAPI 동시재생)'
+    $sc.Description = '보르타 이지스 Pro v3.2 PC (자유 분할 · 실시간 파동 · 모듈형 팩 · 백그라운드 상주)'
     $sc.Save()
     $created += $lnkPath
 }}

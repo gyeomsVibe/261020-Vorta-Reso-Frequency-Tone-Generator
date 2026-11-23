@@ -25,7 +25,11 @@ namespace VortaAegisPC
         public double MiniLeft = double.NaN;
         public double MiniTop = double.NaN;
         public double MiniWidth = 436;
+        public double ConsolePaneWidth = double.NaN;
+        public string PackFilterId = "";
+        public bool ScopeShowComposite = false;
         public List<int> FavoriteIds = new List<int>();
+        public List<int> RecentPresetIds = new List<int>();
     }
 
     public static class AppStateStore
@@ -37,6 +41,11 @@ namespace VortaAegisPC
         {
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             return Path.Combine(localAppData, "VortaAegis");
+        }
+
+        public static string GetUserPacksDirectory()
+        {
+            return Path.Combine(GetStateDirectory(), "packs");
         }
 
         public static string GetStatePath()
@@ -72,9 +81,10 @@ namespace VortaAegisPC
             if (data == null) return;
             data.VolumePercent = VolumeCurve.ClampPercent(data.VolumePercent);
             data.LastTab = TabSyncPolicy.ClampTabIndex(data.LastTab);
-            if (data.LastPresetId < 1 || data.LastPresetId > 48) data.LastPresetId = 1;
+            if (data.LastPresetId < 1 || data.LastPresetId > 99999) data.LastPresetId = 1;
             if (data.OutputProfile < 0 || data.OutputProfile > 2) data.OutputProfile = (int)PcOutputProfile.PcSpeaker;
             if (data.DeviceId == null) data.DeviceId = "";
+            if (data.PackFilterId == null) data.PackFilterId = "";
 
             if (double.IsNaN(data.WindowLeft) || double.IsInfinity(data.WindowLeft) || data.WindowLeft <= -90000.0)
                 data.WindowLeft = double.NaN;
@@ -84,6 +94,11 @@ namespace VortaAegisPC
                 data.MiniLeft = double.NaN;
             if (double.IsNaN(data.MiniTop) || double.IsInfinity(data.MiniTop) || data.MiniTop <= -90000.0)
                 data.MiniTop = double.NaN;
+
+            if (double.IsNaN(data.ConsolePaneWidth) || double.IsInfinity(data.ConsolePaneWidth) || data.ConsolePaneWidth <= -90000.0 || data.ConsolePaneWidth <= 0.0)
+                data.ConsolePaneWidth = double.NaN;
+            else if (data.ConsolePaneWidth < 340.0) data.ConsolePaneWidth = 340.0;
+            else if (data.ConsolePaneWidth > 620.0) data.ConsolePaneWidth = 620.0;
 
             if (double.IsNaN(data.WindowWidth) || double.IsInfinity(data.WindowWidth) || data.WindowWidth <= 0.0)
                 data.WindowWidth = 920.0;
@@ -106,13 +121,28 @@ namespace VortaAegisPC
                 for (int i = 0; i < data.FavoriteIds.Count; i++)
                 {
                     int id = data.FavoriteIds[i];
-                    if (id >= 1 && id <= 48 && !cleanFav.Contains(id))
+                    if (id >= 1 && id <= 99999 && !cleanFav.Contains(id))
                     {
                         cleanFav.Add(id);
                     }
                 }
             }
             data.FavoriteIds = cleanFav;
+
+            List<int> cleanRecent = new List<int>();
+            if (data.RecentPresetIds != null)
+            {
+                for (int i = 0; i < data.RecentPresetIds.Count; i++)
+                {
+                    int id = data.RecentPresetIds[i];
+                    if (id >= 1 && id <= 99999 && !cleanRecent.Contains(id))
+                    {
+                        cleanRecent.Add(id);
+                        if (cleanRecent.Count >= 8) break;
+                    }
+                }
+            }
+            data.RecentPresetIds = cleanRecent;
         }
 
         private static double EncodePos(double v)
@@ -146,7 +176,11 @@ namespace VortaAegisPC
                     dto.MiniLeft = EncodePos(data.MiniLeft);
                     dto.MiniTop = EncodePos(data.MiniTop);
                     dto.MiniWidth = data.MiniWidth;
+                    dto.ConsolePaneWidth = EncodePos(data.ConsolePaneWidth);
+                    dto.PackFilterId = data.PackFilterId;
+                    dto.ScopeShowComposite = data.ScopeShowComposite;
                     dto.FavoriteIds = new List<int>(data.FavoriteIds);
+                    dto.RecentPresetIds = new List<int>(data.RecentPresetIds);
 
                     string dir = GetStateDirectory();
                     if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
