@@ -270,8 +270,8 @@ public class TestU338Aegis {
     private static void verifyAppSourceAudit(File appDir) throws Exception {
         File manifest = new File(appDir, "AndroidManifest.xml");
         String mfText = new String(Files.readAllBytes(manifest.toPath()), StandardCharsets.UTF_8);
-        assertTrue(mfText.contains("android:versionCode=\"12\""), "versionCode=12");
-        assertTrue(mfText.contains("android:versionName=\"3.4.4\""), "versionName=3.4.4");
+        assertTrue(mfText.contains("android:versionCode=\"14\""), "versionCode=14");
+        assertTrue(mfText.contains("android:versionName=\"3.4.6\""), "versionName=3.4.6");
         assertTrue(mfText.contains("android:minSdkVersion=\"21\""), "minSdkVersion=21");
         assertTrue(mfText.contains("android:exported=\"false\""), "AegisAudioService exported=false");
 
@@ -281,8 +281,18 @@ public class TestU338Aegis {
         assertTrue(!mainText.contains("mBtnQuickMute"), "Unified volume: no mBtnQuickMute");
         assertTrue(!mainText.contains("mTvQuickVolPct"), "Unified volume: no mTvQuickVolPct");
         assertTrue(mainText.contains("mScopeSection.setVisibility(View.GONE);"), "Mini mode hides waveform graph by default");
-        assertTrue(mainText.contains("mScopeSection.setVisibility(expanded ? View.VISIBLE : View.GONE);"), "Studio toggle controls waveform visibility");
+        assertTrue(mainText.contains("int studioVis = expanded ? View.VISIBLE : View.GONE;")
+                && mainText.contains("mScopeSection.setVisibility(studioVis);"), "Studio toggle controls waveform visibility");
         assertTrue(mainText.contains("mWaveformView.setActive(expanded && mLastDisplayedRunning);"), "Waveform animates in Studio mode only");
+        assertTrue(mainText.contains("mVuBarViews") && mainText.contains("mVuWavePhase")
+                && mainText.contains("setScaleY") && mainText.contains("50L"),
+                "Live 20fps traveling-wave 12-bar VU meter active");
+        assertTrue(mainText.contains("mDetentRow.setVisibility(View.GONE);")
+                && mainText.contains("mRecSectionView.setVisibility(View.GONE);")
+                && mainText.contains("mSearchBarView.setVisibility(View.GONE);")
+                && mainText.contains("mFilterChipSectionView.setVisibility(View.GONE);")
+                && mainText.contains("mConsoleExpanded && mLastDisplayedRunning && mActivePreset != null"),
+                "Basic Compact mode hides Studio detents/recommendations/search/filters cleanly");
         assertTrue(!mainText.contains("card.addView(mWaveformView);"), "Waveform lives inside mScopeSection");
         assertTrue(!mainText.contains("mConsoleDetailBody.addView(mWaveformView)"), "Waveform placed directly below info, not below volume");
         assertTrue(!mainText.contains("mConsoleDetailBody.addView(buildVolumeControlBlock())"), "No duplicate volume inside studio body");

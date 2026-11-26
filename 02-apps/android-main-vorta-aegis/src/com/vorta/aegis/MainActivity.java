@@ -55,10 +55,10 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Commercial Precision Acoustic Instrument UI for Vorta Aegis Pro v3.4.4.
+ * Commercial Precision Acoustic Instrument UI for Vorta Aegis Pro v3.4.6.
  * Non-expert daily UX + Pro acoustic studio:
- * - Mini Mode (collapsed): Info Card -> Unified Volume Controller (no waveform graph for compact daily simplicity)
- * - Studio Mode (expanded): Info Card -> Auto-Animating Waveform -> Unified Volume -> Acoustic Studio Controls
+ * - Basic Compact Mode (default collapsed): Streamlined Info + Live VU -> Button+Slider Volume -> 4 Courses -> 8 Tabs & Cards
+ * - Studio Mode (expanded): Info -> Auto Waveform -> Full Volume (5 detents + Rec Vol) -> Acoustic Details -> Recommendations & Search
  * - Time-of-day smart recommendations, 4 Auto-Courses, plain-Korean ELI10 guide, and multi-token search
  * - Zero-churn telemetry loop and 360dp / 1.3x font-scale clip-free layout
  */
@@ -122,8 +122,11 @@ public class MainActivity extends Activity {
     private boolean mConsoleExpanded = false;
     private ImageView mLedIndicator;
     private TextView mTvStatusText;
+    private final View[] mVuBarViews = new View[12];
     private final GradientDrawable[] mVuBarDrawables = new GradientDrawable[12];
     private float mVuSmoothLevel = 0.0f;
+    private float mVuWavePhase = 0.0f;
+    private long mLastVuAnimNs = 0L;
     private TextView mBtnAccordionToggle;
     private TextView mTvHeroFreq;
     private TextView mTvHeroSubBadge;
@@ -152,6 +155,7 @@ public class MainActivity extends Activity {
     private TextView mTvSystemVolume;
     private ImageButton mBtnMute;
     private SeekBar mSeekVolume;
+    private LinearLayout mDetentRow;
     private final List<TextView> mDetentChips = new ArrayList<>();
     private TextView mBtnRecommendedVol;
 
@@ -165,15 +169,18 @@ public class MainActivity extends Activity {
     private String mLastActiveRoutineId = "";
     private String mLastRoutineText = "";
 
+    private View mRecSectionView;
     private TextView mTvRecHeader;
     private LinearLayout mRecCardsRow;
     private final List<LinearLayout> mRecCardViews = new ArrayList<>();
     private final List<Integer> mRecPresetIds = new ArrayList<>();
+    private View mSearchBarView;
     private EditText mEtSearch;
     private TextView mBtnClearSearch;
     private TextView mTvSearchStatus;
     private String mSearchQuery = "";
 
+    private View mFilterChipSectionView;
     private final List<TextView> mFilterChips = new ArrayList<>();
     private HorizontalScrollView mTabScrollView;
     private LinearLayout mTabLayout;
@@ -204,6 +211,7 @@ public class MainActivity extends Activity {
 
     // Telemetry change-detection caches (zero-churn UI tick)
     private int mLastVuLitCount = -1;
+    private int mTelemetrySlowCounter = 0;
     private int mLastSysVol = -1;
     private int mLastSysMax = -1;
     private String mLastScopeTelemetry = "";
@@ -220,7 +228,7 @@ public class MainActivity extends Activity {
         @Override
         public void run() {
             refreshLiveTelemetry();
-            mUiHandler.postDelayed(this, mLastDisplayedRunning ? 150L : 1000L);
+            mUiHandler.postDelayed(this, mLastDisplayedRunning ? 50L : 1000L);
         }
     };
 
@@ -449,9 +457,20 @@ public class MainActivity extends Activity {
         root.addView(buildEditorialHeader());
         root.addView(buildConsoleCard());
         root.addView(buildRoutineStrip());
-        root.addView(buildRecommendationStrip());
-        root.addView(buildSearchBar());
-        root.addView(buildFilterChipRow());
+
+        // Studio-only discovery sections (hidden in Basic Compact mode)
+        mRecSectionView = buildRecommendationStrip();
+        mRecSectionView.setVisibility(View.GONE);
+        root.addView(mRecSectionView);
+
+        mSearchBarView = buildSearchBar();
+        mSearchBarView.setVisibility(View.GONE);
+        root.addView(mSearchBarView);
+
+        mFilterChipSectionView = buildFilterChipRow();
+        mFilterChipSectionView.setVisibility(View.GONE);
+        root.addView(mFilterChipSectionView);
+
         root.addView(buildCategoryTabs());
 
         mTvSearchStatus = new TextView(this);
@@ -481,14 +500,14 @@ public class MainActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(0, 0, 0, dp(8));
+        header.setPadding(0, 0, 0, dp(6));
 
         LinearLayout leftCol = new LinearLayout(this);
         leftCol.setOrientation(LinearLayout.VERTICAL);
         leftCol.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
 
         TextView tvEyebrow = new TextView(this);
-        tvEyebrow.setText("VORTA AEGIS · v3.4.4");
+        tvEyebrow.setText("VORTA AEGIS · v3.4.6");
         tvEyebrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         tvEyebrow.setTextColor(COL_TEXT_TERTIARY);
         applyTabularMono(tvEyebrow, true);
@@ -571,7 +590,7 @@ public class MainActivity extends Activity {
         card.setPadding(dp(12), dp(10), dp(12), dp(10));
         LinearLayout.LayoutParams dashLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        dashLp.bottomMargin = dp(10);
+        dashLp.bottomMargin = dp(8);
         card.setLayoutParams(dashLp);
 
         // --- Accordion Always-Visible Mini Header ---
@@ -616,12 +635,13 @@ public class MainActivity extends Activity {
         vuRowLp.rightMargin = dp(8);
         vuRow.setLayoutParams(vuRowLp);
         int barW = dp(3);
-        int barH = dp(11);
+        int barH = dp(14);
         int barGap = dp(2);
         float barRad = dp(1);
         for (int i = 0; i < 12; i++) {
             View bar = new View(this);
             LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(barW, barH);
+            barLp.gravity = Gravity.CENTER_VERTICAL;
             if (i < 11) barLp.rightMargin = barGap;
             bar.setLayoutParams(barLp);
             GradientDrawable gd = new GradientDrawable();
@@ -629,7 +649,9 @@ public class MainActivity extends Activity {
             gd.setCornerRadius(barRad);
             gd.setColor(COL_VU_OFF);
             mVuBarDrawables[i] = gd;
+            mVuBarViews[i] = bar;
             bar.setBackground(gd);
+            bar.setScaleY(0.30f);
             vuRow.addView(bar);
         }
         statusRow.addView(vuRow);
@@ -1142,7 +1164,7 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        boxLp.bottomMargin = dp(10);
+        boxLp.bottomMargin = dp(8);
         box.setLayoutParams(boxLp);
 
         TextView hdr = new TextView(this);
@@ -1296,7 +1318,7 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        boxLp.bottomMargin = dp(10);
+        boxLp.bottomMargin = dp(8);
         box.setLayoutParams(boxLp);
 
         mTvRecHeader = new TextView(this);
@@ -1456,11 +1478,32 @@ public class MainActivity extends Activity {
 
     private void setConsoleExpanded(boolean expanded) {
         mConsoleExpanded = expanded;
+        int studioVis = expanded ? View.VISIBLE : View.GONE;
         if (mScopeSection != null) {
-            mScopeSection.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            mScopeSection.setVisibility(studioVis);
+        }
+        if (mDetentRow != null) {
+            mDetentRow.setVisibility(studioVis);
         }
         if (mConsoleDetailBody != null) {
-            mConsoleDetailBody.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            mConsoleDetailBody.setVisibility(studioVis);
+        }
+        if (mRecSectionView != null) {
+            mRecSectionView.setVisibility(studioVis);
+        }
+        if (mSearchBarView != null) {
+            mSearchBarView.setVisibility(studioVis);
+        }
+        if (mFilterChipSectionView != null) {
+            mFilterChipSectionView.setVisibility(studioVis);
+        }
+        if (!expanded) {
+            if (!mSearchQuery.trim().isEmpty()) {
+                clearSearchAndHideKeyboard();
+            }
+            if (mCurrentFilterMode != FILTER_ALL) {
+                setFilterMode(FILTER_ALL);
+            }
         }
         if (mBtnAccordionToggle != null) {
             mBtnAccordionToggle.setText(expanded ? "접기 ▲" : "스튜디오 ▼");
@@ -1477,6 +1520,7 @@ public class MainActivity extends Activity {
                 mTvScenarioTitle.setEllipsize(TextUtils.TruncateAt.END);
             }
         }
+        updateRecommendedVolumeChip();
         if (mWaveformView != null) {
             mWaveformView.setActive(expanded && mLastDisplayedRunning);
             if (expanded && mLastDisplayedRunning) {
@@ -1486,30 +1530,70 @@ public class MainActivity extends Activity {
     }
 
     private void updateVuMeter(float rmsDbfs, boolean running) {
-        int litCount = 0;
-        if (running && !mIsMuted && mVolumePercent > 0) {
-            float norm = (rmsDbfs + 48.0f) / 47.5f;
-            if (norm < 0.0f) norm = 0.0f;
-            if (norm > 1.0f) norm = 1.0f;
-            if (norm > 0.0f && norm < 0.10f) norm = 0.10f;
-            mVuSmoothLevel = (mVuSmoothLevel * 0.45f) + (norm * 0.55f);
-            litCount = Math.round(mVuSmoothLevel * 12.0f);
-        } else {
+        if (!running || mIsMuted || mVolumePercent <= 0) {
             mVuSmoothLevel = 0.0f;
-        }
-        if (litCount == mLastVuLitCount) {
+            mLastVuAnimNs = 0L;
+            if (mLastVuLitCount != 0) {
+                mLastVuLitCount = 0;
+                for (int i = 0; i < 12; i++) {
+                    if (mVuBarDrawables[i] != null) mVuBarDrawables[i].setColor(COL_VU_OFF);
+                    if (mVuBarViews[i] != null) mVuBarViews[i].setScaleY(0.30f);
+                }
+            }
             return;
         }
+
+        float norm = (rmsDbfs > -90.0f)
+                ? (rmsDbfs + 50.0f) / 49.5f
+                : (mVolumePercent / 120.0f);
+        if (norm < 0.16f) norm = 0.16f;
+        if (norm > 1.0f) norm = 1.0f;
+        mVuSmoothLevel = (mVuSmoothLevel * 0.45f) + (norm * 0.55f);
+
+        long nowNs = System.nanoTime();
+        float dtSec = (mLastVuAnimNs == 0L) ? 0.05f : ((nowNs - mLastVuAnimNs) * 1e-9f);
+        mLastVuAnimNs = nowNs;
+        if (dtSec < 0.016f) dtSec = 0.016f;
+        if (dtSec > 0.12f) dtSec = 0.12f;
+
+        float speed = 1.15f;
+        if (mIsBound && mService != null) {
+            float beat = mService.getCurrentLiveBeatHz();
+            float fHz = mService.getCurrentLiveFreqHz();
+            if (beat > 0.5f) {
+                speed = 0.85f + Math.min(1.35f, beat * 0.04f);
+            } else if (fHz > 0.0f) {
+                speed = 0.70f + Math.min(1.40f, (float) Math.log10(1.0 + fHz) * 0.35f);
+            }
+        }
+        mVuWavePhase = (mVuWavePhase + dtSec * speed) % 1.0f;
+        double baseRad = mVuWavePhase * (2.0 * Math.PI);
+        float breath = 0.5f + 0.5f * (float) Math.sin(baseRad);
+        int litCount = Math.round((mVuSmoothLevel * 0.80f + breath * 0.24f) * 12.0f);
+        if (litCount < 2) litCount = 2;
+        if (litCount > 12) litCount = 12;
         mLastVuLitCount = litCount;
+
         for (int i = 0; i < 12; i++) {
             GradientDrawable gd = mVuBarDrawables[i];
-            if (gd == null) continue;
+            View bar = mVuBarViews[i];
             if (i < litCount) {
-                if (i >= 11) gd.setColor(COL_STOPPED);
-                else if (i >= 8) gd.setColor(COL_AMBER);
-                else gd.setColor(COL_ACTIVE);
+                if (gd != null) {
+                    if (i >= 11) gd.setColor(COL_STOPPED);
+                    else if (i >= 8) gd.setColor(COL_AMBER);
+                    else gd.setColor(COL_ACTIVE);
+                }
+                if (bar != null) {
+                    float w1 = 0.5f + 0.5f * (float) Math.sin(baseRad - i * 0.58);
+                    float w2 = 0.5f + 0.5f * (float) Math.sin(baseRad * 1.55 + i * 0.85);
+                    float energy = mVuSmoothLevel * (0.45f + 0.40f * w1 + 0.25f * w2);
+                    if (energy < 0.15f) energy = 0.15f;
+                    if (energy > 1.0f) energy = 1.0f;
+                    bar.setScaleY(0.30f + 0.70f * energy);
+                }
             } else {
-                gd.setColor(COL_VU_OFF);
+                if (gd != null) gd.setColor(COL_VU_OFF);
+                if (bar != null) bar.setScaleY(0.28f);
             }
         }
     }
@@ -1763,13 +1847,15 @@ public class MainActivity extends Activity {
 
         block.addView(faderRow);
 
-        // 2-line stacked zero-clipping detent chips for 360dp / 1.3x font scale
+        // 2-line stacked zero-clipping detent chips (Studio-only for Basic Compact simplicity)
         LinearLayout detentRow = new LinearLayout(this);
         detentRow.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams detRowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         detRowLp.topMargin = dp(6);
         detentRow.setLayoutParams(detRowLp);
+        mDetentRow = detentRow;
+        mDetentRow.setVisibility(View.GONE);
 
         mDetentChips.clear();
         for (int i = 0; i < DETENT_VALUES.length; i++) {
@@ -2153,7 +2239,7 @@ public class MainActivity extends Activity {
 
     private void updateRecommendedVolumeChip() {
         if (mBtnRecommendedVol == null) return;
-        if (mLastDisplayedRunning && mActivePreset != null) {
+        if (mConsoleExpanded && mLastDisplayedRunning && mActivePreset != null) {
             int recPct = PresetAdvisor.getRecommendedVolumePercent(mActivePreset);
             mBtnRecommendedVol.setVisibility(View.VISIBLE);
             boolean matched = (!mIsMuted && mVolumePercent == recPct);
@@ -2841,32 +2927,37 @@ public class MainActivity extends Activity {
     }
 
     private void refreshLiveTelemetry() {
-        updateSystemVolumeReadout();
+        boolean slowTick = (mTelemetrySlowCounter++ % 4 == 0);
+        if (slowTick) {
+            updateSystemVolumeReadout();
+        }
         if (mIsBound && mService != null) {
             boolean running = mService.isPlaying();
             PresetModel p = mService.getCurrentPreset();
             if (running && p != null) {
                 mActivePreset = p;
-                float liveHz = mService.getCurrentLiveFreqHz();
-                if (liveHz <= 0.0f) {
-                    liveHz = (p.freq1 > 0f) ? p.freq1 : p.sweepStart;
-                }
-                boolean guarded = mService.isUltrasonicGuarded();
-                boolean compActive = mService.getDspCore().isAcousticCompensationActive();
-                if (!mLastDisplayedRunning || mLastHighlightedPresetId != p.id) {
-                    updateDashboard(p, true, liveHz);
-                } else {
-                    updateHeroFreqViews(liveHz, p, true);
-                    if (guarded != mLastUltrasonicGuarded || compActive != mLastCompActive) {
-                        updateMechanismText(p, guarded);
+                if (slowTick || !mLastDisplayedRunning || mLastHighlightedPresetId != p.id) {
+                    float liveHz = mService.getCurrentLiveFreqHz();
+                    if (liveHz <= 0.0f) {
+                        liveHz = (p.freq1 > 0f) ? p.freq1 : p.sweepStart;
                     }
-                }
-                if (mTvScopeTelemetry != null) {
-                    String scopeStr = String.format(Locale.US, "%.1f dBFS · 클리핑 %d",
-                            mService.getLiveRmsDbfs(), mService.getOvershootCount());
-                    if (!scopeStr.equals(mLastScopeTelemetry)) {
-                        mLastScopeTelemetry = scopeStr;
-                        mTvScopeTelemetry.setText(scopeStr);
+                    boolean guarded = mService.isUltrasonicGuarded();
+                    boolean compActive = mService.getDspCore().isAcousticCompensationActive();
+                    if (!mLastDisplayedRunning || mLastHighlightedPresetId != p.id) {
+                        updateDashboard(p, true, liveHz);
+                    } else {
+                        updateHeroFreqViews(liveHz, p, true);
+                        if (guarded != mLastUltrasonicGuarded || compActive != mLastCompActive) {
+                            updateMechanismText(p, guarded);
+                        }
+                    }
+                    if (mTvScopeTelemetry != null) {
+                        String scopeStr = String.format(Locale.US, "%.1f dBFS · 클리핑 %d",
+                                mService.getLiveRmsDbfs(), mService.getOvershootCount());
+                        if (!scopeStr.equals(mLastScopeTelemetry)) {
+                            mLastScopeTelemetry = scopeStr;
+                            mTvScopeTelemetry.setText(scopeStr);
+                        }
                     }
                 }
                 updateVuMeter(mService.getLiveRmsDbfs(), true);
@@ -2879,8 +2970,10 @@ public class MainActivity extends Activity {
                     updateDashboard(null, false, 0.0f);
                 }
             }
-            updateTimerChipUi();
-            updateRoutineBannerUi();
+            if (slowTick) {
+                updateTimerChipUi();
+                updateRoutineBannerUi();
+            }
         }
     }
 
@@ -3064,7 +3157,7 @@ public class MainActivity extends Activity {
         box.setPadding(dp(18), dp(16), dp(18), dp(12));
 
         TextView tTitle = new TextView(this);
-        tTitle.setText("보르타 이지스 v3.4.4 · 설정 및 진단");
+        tTitle.setText("보르타 이지스 v3.4.6 · 설정 및 진단");
         tTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f);
         tTitle.setTextColor(COL_AMBER);
         tTitle.setTypeface(Typeface.DEFAULT_BOLD);
@@ -3169,7 +3262,7 @@ public class MainActivity extends Activity {
         tBody.setText(
                 "• 빠른 설정 타일: 상단 알림창 빠른 설정에서 [보르타 이지스] 타일을 추가해 원터치 재생/중지 가능\n"
                 + "• 카탈로그: 코어 48종 + Pro 16종 + 여정 24종 (총 88종) · 4대 원탭 코스\n"
-                + "• 빌드 정보: v3.4.4 (Build 12) · API 21~33 호환\n"
+                + "• 빌드 정보: v3.4.6 (Build 14) · API 21~33 호환\n"
                 + "• 라이선스: Proprietary Commercial / Evaluation EULA (v1.0)\n"
                 + "• 저작권: Copyright (c) 2026 gyeomsVibe (김윤겸)\n"
                 + "• 안내: 본 앱은 일반 웰니스·집중·환경음 마스킹 보조용이며 의료기기가 아닙니다."

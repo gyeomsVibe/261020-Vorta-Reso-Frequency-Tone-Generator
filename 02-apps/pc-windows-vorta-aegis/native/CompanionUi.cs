@@ -1787,6 +1787,9 @@ namespace VortaAegisPC
         private Ellipse mStatusLed;
         private TextBlock mTxtStatus;
         private readonly List<Border> mVuBars = new List<Border>();
+        private double mVuSmoothLevel;
+        private double mVuWavePhase;
+        private long mLastVuTickMs;
         private TextBlock mTxtHeroFreq;
         private Border mHeroSubBadge;
         private TextBlock mTxtHeroSubText;
@@ -1846,6 +1849,7 @@ namespace VortaAegisPC
         private TextBlock mTxtVolumeReadout;
         private TextBlock mTxtHeadroomNote;
         private Slider mSeekVolume;
+        private Grid mDetentGrid;
         private bool mSuppressSeekCallback;
         private readonly List<Border> mDetentChips = new List<Border>();
         private readonly List<TextBlock> mDetentPcts = new List<TextBlock>();
@@ -1867,6 +1871,7 @@ namespace VortaAegisPC
         private TextBlock mTxtActionBtn;
 
         // Browser pane
+        private Grid mBrowserTopBar;
         private TextBox mSearchBox;
         private TextBlock mSearchPlaceholder;
         private Border mClearSearchBtn;
@@ -2160,10 +2165,20 @@ namespace VortaAegisPC
             else
             {
                 double h = (double.IsNaN(height) || height <= 0) ? 740.0 : height;
-                mConsoleScroll.MaxHeight = Math.Max(260.0, h * 0.56);
-                mScope.Height = 84;
+                mConsoleScroll.MaxHeight = Math.Max(220.0, h * 0.42);
                 UpdateBrowserColumns(width - 24.0);
+                if (mSearchBox != null && !string.IsNullOrEmpty(mSearchBox.Text))
+                {
+                    mSearchBox.Text = "";
+                }
             }
+
+            Visibility studioVis = wide ? Visibility.Visible : Visibility.Collapsed;
+            if (mScope != null) mScope.Visibility = studioVis;
+            if (mSweepPanel != null && !wide) mSweepPanel.Visibility = Visibility.Collapsed;
+            if (mDetentGrid != null) mDetentGrid.Visibility = studioVis;
+            if (mQuickDockCard != null) mQuickDockCard.Visibility = studioVis;
+            if (mBrowserTopBar != null) mBrowserTopBar.Visibility = studioVis;
 
             if (mVerBadge != null)
             {
@@ -2437,13 +2452,15 @@ namespace VortaAegisPC
             StackPanel vuStack = new StackPanel();
             vuStack.Orientation = Orientation.Horizontal;
             vuStack.VerticalAlignment = VerticalAlignment.Center;
+            vuStack.Height = 14;
             vuStack.Margin = new Thickness(0, 0, 8, 0);
             mVuBars.Clear();
             for (int i = 0; i < 12; i++)
             {
                 Border bar = new Border();
                 bar.Width = 3;
-                bar.Height = 10;
+                bar.Height = 4;
+                bar.VerticalAlignment = VerticalAlignment.Center;
                 bar.CornerRadius = new CornerRadius(1);
                 bar.Background = ThemePalette.BrSurfaceHigh;
                 bar.Margin = new Thickness(0, 0, i < 11 ? 2 : 0, 0);
@@ -2862,8 +2879,9 @@ namespace VortaAegisPC
             faderRow.Children.Add(btnPlus);
             volSection.Children.Add(faderRow);
 
-            // 6 Two-Line Detent Presets: 15%..100%..120%
+            // 6 Two-Line Detent Presets: 15%..100%..120% (Studio-only in wide mode)
             Grid detentGrid = new Grid();
+            mDetentGrid = detentGrid;
             detentGrid.Margin = new Thickness(0, 0, 0, 10);
             mDetentChips.Clear();
             mDetentPcts.Clear();
@@ -3345,8 +3363,9 @@ namespace VortaAegisPC
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-            // Row 0: Search + Pack Filter + Favorites Filter
+            // Row 0: Search + Pack Filter + Favorites Filter (Studio-only in wide mode)
             Grid topBar = new Grid();
+            mBrowserTopBar = topBar;
             topBar.Margin = new Thickness(0, 0, 0, 9);
             topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             topBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -4630,7 +4649,7 @@ namespace VortaAegisPC
 
         private void UpdateSweepBar(PresetItem p, bool running)
         {
-            if (!running || p == null || !p.IsSweep)
+            if (!running || p == null || !p.IsSweep || !mIsWideMode)
             {
                 mSweepPanel.Visibility = Visibility.Collapsed;
                 return;
@@ -4650,8 +4669,38 @@ namespace VortaAegisPC
 
         private void UpdateVuMeter(double normLevel)
         {
-            int litCount = (int)Math.Round(normLevel * mVuBars.Count);
-            if (normLevel > 0.01 && litCount < 1) litCount = 1;
+            if (normLevel <= 0.005 || !mCtrl.Dsp.IsPlaying || mCtrl.Dsp.IsMuted || mCtrl.Dsp.VolumePercent <= 0)
+            {
+                mVuSmoothLevel = 0.0;
+                mLastVuTickMs = 0;
+                for (int i = 0; i < mVuBars.Count; i++)
+                {
+                    mVuBars[i].Height = 4;
+                    mVuBars[i].Background = ThemePalette.BrSurfaceHigh;
+                }
+                return;
+            }
+
+            mVuSmoothLevel = (mVuSmoothLevel * 0.45) + (normLevel * 0.55);
+            long nowMs = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+            double dtSec = (mLastVuTickMs == 0) ? 0.033 : ((nowMs - mLastVuTickMs) * 0.001);
+            mLastVuTickMs = nowMs;
+            if (dtSec < 0.016) dtSec = 0.016;
+            if (dtSec > 0.12) dtSec = 0.12;
+
+            double speed = 1.15;
+            double beat = mCtrl.Dsp.LiveBeatHz;
+            double fHz = mCtrl.Dsp.LiveFreqHz;
+            if (beat > 0.5) speed = 0.85 + Math.Min(1.35, beat * 0.04);
+            else if (fHz > 0.0) speed = 0.70 + Math.Min(1.40, Math.Log10(1.0 + fHz) * 0.35);
+
+            mVuWavePhase = (mVuWavePhase + dtSec * speed) % 1.0;
+            double baseRad = mVuWavePhase * (2.0 * Math.PI);
+            double breath = 0.5 + 0.5 * Math.Sin(baseRad);
+            int litCount = (int)Math.Round((mVuSmoothLevel * 0.80 + breath * 0.24) * mVuBars.Count);
+            if (litCount < 2) litCount = 2;
+            if (litCount > mVuBars.Count) litCount = mVuBars.Count;
+
             for (int i = 0; i < mVuBars.Count; i++)
             {
                 if (i < litCount)
@@ -4659,9 +4708,17 @@ namespace VortaAegisPC
                     if (i >= 11) mVuBars[i].Background = ThemePalette.BrStopped;
                     else if (i >= 8) mVuBars[i].Background = ThemePalette.BrAmber;
                     else mVuBars[i].Background = ThemePalette.BrActive;
+
+                    double w1 = 0.5 + 0.5 * Math.Sin(baseRad - i * 0.58);
+                    double w2 = 0.5 + 0.5 * Math.Sin(baseRad * 1.55 + i * 0.85);
+                    double energy = mVuSmoothLevel * (0.45 + 0.40 * w1 + 0.25 * w2);
+                    if (energy < 0.15) energy = 0.15;
+                    if (energy > 1.0) energy = 1.0;
+                    mVuBars[i].Height = Math.Round(4.0 + 10.0 * energy);
                 }
                 else
                 {
+                    mVuBars[i].Height = 4;
                     mVuBars[i].Background = ThemePalette.BrSurfaceHigh;
                 }
             }
@@ -5158,11 +5215,21 @@ namespace VortaAegisPC
             PresetItem p = mCtrl.Dsp.CurrentPreset;
             float hz = mCtrl.Dsp.LiveFreqHz > 0f ? mCtrl.Dsp.LiveFreqHz : (p.IsSweep ? p.SweepStart : p.Freq1);
             UpdateHeroViews(hz, p, true);
-            double norm = Math.Max(0.0, Math.Min(1.0, mCtrl.Dsp.PeakLevel / AegisDspEngine.CLEAN_BOOST_CEILING));
+            double norm = 0.0;
+            if (!mCtrl.Dsp.IsMuted && mCtrl.Dsp.VolumePercent > 0)
+            {
+                double dbfs = mCtrl.Dsp.LiveRmsDbfs;
+                norm = (dbfs > -90.0)
+                    ? Math.Max(0.16, Math.Min(1.0, (dbfs + 50.0) / 49.5))
+                    : Math.Max(0.16, mCtrl.Dsp.VolumePercent / 120.0);
+            }
             UpdateVuMeter(norm);
             UpdateLiveLevelCell();
             if (p.IsSweep) UpdateSweepBar(p, true);
-            mScope.UpdateFrame(mCtrl.Dsp);
+            if (mScope.Visibility == Visibility.Visible)
+            {
+                mScope.UpdateFrame(mCtrl.Dsp);
+            }
         }
 
         private void OnTelemetryTick(object sender, EventArgs e)
