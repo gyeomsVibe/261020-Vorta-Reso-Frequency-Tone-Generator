@@ -91,6 +91,12 @@ namespace VortaAegisPC
             PulseAudioWake();
         }
 
+        public void GentleStopPlayback(double durationSec)
+        {
+            mDsp.RequestGentleStop(durationSec);
+            PulseAudioWake();
+        }
+
         public void StopAndWaitFadeOut(int timeoutMs)
         {
             mDsp.RequestStop();

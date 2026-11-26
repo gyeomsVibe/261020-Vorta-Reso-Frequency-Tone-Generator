@@ -163,3 +163,49 @@
 - **무클리핑(하드 클램프 0건) `120%` 증폭 교정**: `AegisDspEngine.cs` 하드 클램프 제거, PC 보정 정규화 및 `LIM_CEIL = -0.50 dBTP` 선형 리미터 추종으로 전 64프리셋 × 3프로파일(`192`조합) `OvershootCount == 0`, 4× 큐빅 트루피크 `<= -0.50 dBTP`, 다중 주파수(`40/200/528/1000 Hz`) 코히어런트 DFT `THD+N < 0.1%` 검증 완료.
 - **상용 브랜딩·업데이트·라이선스 허브**: `AssemblyInfo.cs`(Win32 PE `VersionInfo` `3.2.0.0`), `UpdateChecker.cs`(GitHub `version.json` 비동기 HTTPS 확인), `AboutLicenseWindow`(Vorta/Aegis 브랜드 뜻, 버전/팩 관리, `LICENSE`/`NOTICE`/`THIRD_PARTY_NOTICES.md`/`SECURITY.md`/정식 인증 가이드 바로 연결).
 
+---
+
+## PART 7. 모바일 `v3.3.0` 전수점검 · 웹 딥리서치 기반 음향심리·일상 UX 고도화 (Card U337)
+
+> 상세 분석 및 실측 근거는 [보르타 이지스 모바일 전수점검·시장조사·v3.3 고도화 보고서](../03-device-engineering-and-reports/보르타_이지스_모바일_전수점검_시장조사_및_v33_고도화_보고서.md) 참조.
+
+1. **안정성·동시성 하드닝 (`AegisAudioService.java`, `AegisQuickTileService.java`)**:
+   - `mSessionGen` 세대 토큰으로 중지/재시작 경합 차단, `AudioTrack.ERROR_DEAD_OBJECT` 최대 3회 자동 복구, API 24+ **빠른 설정 타일(`AegisQuickTileService`)** 및 `20초` 제곱 포락선 수면 타이머 페이드아웃 탑재.
+2. **음향심리 DSP 고도화 (`AegisDspCore.java`)**:
+   - **`출력 음향 보정` 4모드(`자동`/`스피커`/`이어폰`/`순수원음`)**: 폰 스피커 시 Schouten Missing Fundamental(32~85Hz 2·3배음), `<32Hz` 144Hz 반송파, 바이노럴 이소크로닉 펄스 보조; `noiseType=1` 스테레오 비상관 핑크 노이즈; **배경 사운드 블렌드(`꺼짐`/`브라운`/`핑크`/`빗소리` 0~60%)**; Post-AM/프로파일 전환 디클리커 및 `2π` 위상 래핑.
+3. **비전문가 일상 UX & `360dp / 1.3x` 제로 클리핑 (`PresetAdvisor.java`, `MainActivity.java`)**:
+   - **상시 노출 슬림 퀵 볼륨 바** + **`▶ 이어듣기`**, **시간대별 `지금 추천` 3종**, **동의어 지원 한국어 검색창**, **`최근` 필터**, **카드별 청취 가이드 배지**, **프리셋별 볼륨 기억 & 안전 전환**, **2줄 적층 디텐트·가로 스크롤 필터·무변경 무갱신 텔레메트리**, `설정·정보` 실시간 오디오·배터리 진단 시트 탑재.
+4. **배포 위생 & 실측 검증**:
+   - `build_aegis.py` 저장소 내 `smato_a30_app/debug.keystore` 우선 해석(`SHA-256: 7522fef8...`), `TestU337Aegis` `23,036,785/0 PASS`, `sync_presets.py` `48/48 PASS`, APK `173,553 B` 인플레이스 업그레이드(`Success`, `versionCode=7`, `3.3.0`), Note 20 Ultra 실기 `AudioOut_D 48kHz` 가동·크래시 0건 검증 완료.
+
+---
+
+## PART 8. 모바일 `v3.4.0` 전 8탭 단계별 여정 배열 · 24종 확장 & 원탭 자동 코스 (Card U338)
+
+> 상세 분석 및 전 8탭 단계표는 [보르타 이지스 v3.4 여정 시나리오·자동 코스 고도화 보고서](../03-device-engineering-and-reports/보르타_이지스_v34_여정시나리오_및_자동코스_고도화_보고서.md) 참조.
+
+1. **여정 확장 24종 (`JourneyPackCatalog.java`, `J01..J24`, 총 88종)** & **8탭 단계별 배열 (`JourneyOrderPolicy.java`)**:
+   - `PresetModel`(48)·`ProPackCatalog`(16) ID 무변경 보존 상태에서 운동·수면·집중·명상·두통·기분·안티방어·모기 탭의 빈 단계(준비·상황별 본활동·쿨다운·회복)를 24종으로 채우고, 모든 탭을 **1단계 → 2단계 → 3단계 → 4단계** 흐름으로 정렬(`이전`/`다음` 트랙 이동도 단계 순서 준수).
+2. **바이노럴 진행 램프 엔진 (`AegisDspCore.java`)**:
+   - `isSweep && freq1 > 0f` 시 `sweepStart → sweepEnd`를 `sweepDurationSec` 동안 단조 진행 후 목표 차주파수에 안정적으로 고정 유지(`J01 10→18Hz`, `J05 12→6Hz`, `J08 10→2Hz` 등), 폰 스피커 모드에서는 이소크로닉 펄스 보정 자동 연동.
+3. **Doze 면역 자동 연계 코스 시퀀서 (`AegisAudioService.java`, `MainActivity.java`)**:
+   - 상단 `원탭 자동 코스` 4종(`웨이트 풀코스 65분`, `근비대·유산소 55분`, `딥워크 60분`, `꿀잠 숙면 60분`), 콘솔 내 실시간 `코스 N/M · 단계명 (MM:SS)` + `다음 단계 ▶` 배너, 마지막 단계 20초 부드러운 페이드아웃 자동 종료.
+4. **검증 영수증**: `TestU338Aegis` `28,735,931/0 PASS`, `sync_presets.py` `48/48 PASS`, `build_aegis.py` `202,225 B`(`SHA-256: 7522fef8...`, `apksigner verify` PASS), Note 20 Ultra 인플레이스 업그레이드(`Success`, `versionCode=8`, `3.4.0`, `PID 8870`, `48000 Hz` Float 실구동, 크래시/포커스 침해 `0`건).
+
+---
+
+## PART 9. PC `v3.4.0` 완전 패리티 · 쉬운 가이드 · 미니/스튜디오(`정보→파동→볼륨`) 통일 (Card U339)
+
+> 상세 보고서는 [보르타 이지스 PC v3.4.0 & 모바일 v3.4.1~v3.4.4 고도화 보고서](../03-device-engineering-and-reports/보르타_이지스_PC_v34_고도화_보고서.md) 참조.
+
+1. **PC `v3.4.0` 네이티브 88종 패리티 & DSP 확장 (`vorta_aegis_pc/native/*.cs`, `packs/vorta_journey_pack_v1.json`)**:
+   - `JourneyAndAdvisor.cs` 및 `vorta_journey_pack_v1.json`으로 여정 24종(총 88종), 8탭 `1단계→4단계` 배열, 4대 원탭 자동 코스, 스테레오 앰비언트 블렌더(`꺼짐`/`브라운`/`핑크`/`빗소리` 0~60%), 바이노럴 진행 램프, Post-AM·프로파일 디클리커, 20초 제곱 포락선 종료, 프리셋별 볼륨 기억·고볼륨 안전 전환을 완전 이식했다.
+2. **전문용어 제로화 & 1탭 쉬운 설명 (`v3.4.1` 모바일 + `v3.4.0` PC)**:
+   - `포모도로(25분 집중·5분 휴식)` 등 약어·전문용어를 전 88종에서 일상 한국어로 정화하고, 모든 프리셋 카드의 `[설명]` 버튼과 상단 `[가이드]`/`[쉬운 가이드]` 팝업을 양 플랫폼에 동시 탑재했다.
+3. **단일 통합 볼륨 & 미니/스튜디오 차별화 (`v3.4.2~v3.4.4` 모바일 + `v3.4.0` PC)**:
+   - 모바일의 중복 볼륨 컨트롤(슬림 퀵바 + 스튜디오 내 볼륨)을 단일 완전 볼륨 블록으로 통일하고, **미니 모드에서는 파동 그래프를 숨겨(`View.GONE` / `MiniBarWindow`) 간결성을 극대화**, **스튜디오 모드에서는 양 플랫폼 모두 `정보표시 창 → 자동 파동 애니메이션(LiveWaveform) → 단일 통합 볼륨`** 순서로 배치해 차별성과 일관성을 동시에 확보했다. `440px` 슬림 PC 타이틀바 클리핑도 `mAboutBtn` 반응형 숨김 및 축약 라벨로 해소했다.
+4. **검증 영수증**: PC `--self-test` `28,542,541/0 PASS`, `test_u339_pc_native.py` `764/0 PASS`, `verify_u339_live.py` 4종 PNG·트레이 복귀 PASS; Android `TestU338Aegis` `28,747,651/0 PASS`, Note 20 Ultra `v3.4.4`(`Build 12`, `PID 24591`) 미니·스튜디오 실기 캡처·크래시 `0`건.
+
+
+
+

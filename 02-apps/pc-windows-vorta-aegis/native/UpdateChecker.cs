@@ -13,9 +13,9 @@ namespace VortaAegisPC
     {
         public const string APP_NAME_KO = "보르타 이지스";
         public const string APP_NAME_EN = "Vorta Aegis Pro PC";
-        public const string APP_VERSION = "3.2.0";
-        public const string VERSION_BADGE = "v3.2 PC";
-        public const string BUILD_DATE = "2026-11-23";
+        public const string APP_VERSION = "3.4.0";
+        public const string VERSION_BADGE = "v3.4 PC";
+        public const string BUILD_DATE = "2026-11-27";
         public const string COPYRIGHT_LINE = "Copyright (c) 2026 gyeomsVibe (김윤겸). All Rights Reserved.";
         public const string LICENSE_TIER = "Proprietary Commercial / Evaluation EULA (v1.0)";
         public const string CODE_SIGN_STATUS = "로컬 빌드 (미서명) · 정식 배포 시 MS Store MSIX / Authenticode 서명 적용 권장";

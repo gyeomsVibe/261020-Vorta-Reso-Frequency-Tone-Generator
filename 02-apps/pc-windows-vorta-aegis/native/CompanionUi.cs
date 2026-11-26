@@ -27,6 +27,14 @@ namespace VortaAegisPC
         bool AllowExit { get; }
         int SleepTimerRemainingSeconds { get; }
         int SleepTimerPresetMinutes { get; }
+        string ActiveRoutineId { get; }
+        string ActiveRoutineTitle { get; }
+        int ActiveRoutineStepIndex { get; }
+        int ActiveRoutineStepCount { get; }
+        string ActiveRoutineStepLabel { get; }
+        int RoutineStepRemainingSeconds { get; }
+        int RoutineTotalRemainingSeconds { get; }
+        string LastSoftenNotice { get; }
         long PlaybackElapsedSeconds { get; }
         string ActiveEndpointDisplayName { get; }
 
@@ -34,6 +42,12 @@ namespace VortaAegisPC
         void PlayAdjacentPreset(int delta);
         void StopPlayback();
         void ApplyVolume(int percent, bool muted);
+        void ApplyAmbientBed(int ambientType, int mixPercent);
+        void ApplyRememberPerPresetVolume(bool enabled);
+        void ApplyGentleSleepFade(bool enabled);
+        void StartRoutine(string routineId);
+        void AdvanceRoutineStep();
+        void StopRoutineOnly();
         void ApplyOutputProfile(PcOutputProfile profile);
         void ApplyDevice(string deviceId);
         void ApplyUltrasonicGuard(bool enabled);
@@ -42,6 +56,8 @@ namespace VortaAegisPC
         void ReloadPacks();
         void OpenPacksFolder();
         void ShowAboutDialog();
+        void ShowBeginnerGuideDialog();
+        void ShowPresetDetailDialog(PresetItem preset);
         void OpenDocumentationFile(string kind);
         void SaveLastTab(int tabIndex);
         void SwitchToMiniMode(bool mini);
@@ -345,6 +361,9 @@ namespace VortaAegisPC
         private Brush mFillEmerald;
         private Brush mFillAmber;
         private Brush mFillRose;
+        private long mLastTickMs = 0;
+        private double mTravelPhaseL = 0.0;
+        private double mTravelPhaseR = 0.0;
 
         public event Action<bool> CompositeModeToggled;
 
@@ -542,6 +561,34 @@ namespace VortaAegisPC
             mGridV3.X1 = w * 0.75; mGridV3.Y1 = 0; mGridV3.X2 = w * 0.75; mGridV3.Y2 = h;
         }
 
+        private static double FindRisingTrigger(float[] buf, int ringLen, int maxTrig)
+        {
+            if (maxTrig <= 2) return 0.0;
+            float snapPeak = 0.0f;
+            for (int i = 0; i < ringLen; i += 4)
+            {
+                float a = Math.Abs(buf[i]);
+                if (a > snapPeak) snapPeak = a;
+            }
+            float armThresh = -Math.Max(0.001f, snapPeak * 0.15f);
+            bool armed = false;
+            for (int i = 1; i < maxTrig; i++)
+            {
+                float prev = buf[i - 1];
+                float cur = buf[i];
+                if (!armed)
+                {
+                    if (cur <= armThresh) armed = true;
+                }
+                else if (prev <= 0.0f && cur > 0.0f)
+                {
+                    double denom = cur - prev;
+                    return (denom > 1e-6) ? ((i - 1) + (-prev / denom)) : (double)i;
+                }
+            }
+            return 0.0;
+        }
+
         public void UpdateFrame(AegisDspEngine dsp)
         {
             mLastDsp = dsp;
@@ -556,6 +603,7 @@ namespace VortaAegisPC
             bool playing = (dsp != null) && dsp.IsPlaying && dsp.CurrentPreset != null;
             if (!playing)
             {
+                mLastTickMs = 0;
                 mWaveFillL.Visibility = Visibility.Collapsed;
                 mWavePathR.Visibility = Visibility.Collapsed;
                 mChanDotR.Visibility = Visibility.Collapsed;
@@ -582,8 +630,16 @@ namespace VortaAegisPC
                 return;
             }
 
+            long nowMs = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+            double dtSec = (mLastTickMs == 0) ? 0.0 : ((nowMs - mLastTickMs) * 0.001);
+            mLastTickMs = nowMs;
+            if (dtSec < 0.0) dtSec = 0.0;
+            if (dtSec > 0.1) dtSec = 0.1;
+
             PresetItem p = dsp.CurrentPreset;
             double liveHz = dsp.LiveFreqHz > 0f ? dsp.LiveFreqHz : (p.IsSweep ? p.SweepStart : p.Freq1);
+            double liveRHz = dsp.LiveFreqRHz > 0f ? dsp.LiveFreqRHz : liveHz;
+            double liveBeat = p.IsBinauralRamp ? dsp.LiveBeatHz : p.BinauralBeat;
             bool compAvail = dsp.IsPcCompensationActive;
             bool wantFund = !mShowComposite && compAvail;
             bool lowRate = (liveHz > 0.0 && liveHz < 55.0);
@@ -599,7 +655,7 @@ namespace VortaAegisPC
             {
                 cycles = lowRate ? 3.0 : 3.5;
                 targetSpan = (int)Math.Round((effSr / liveHz) * cycles);
-                if (targetSpan < 90) targetSpan = 90;
+                if (targetSpan < 48) targetSpan = 48;
             }
             else
             {
@@ -608,32 +664,48 @@ namespace VortaAegisPC
             int maxSpan = ringLen - 320;
             if (targetSpan > maxSpan) targetSpan = maxSpan;
 
-            // Dynamic hysteresis rising zero-crossing trigger (reliable across 0.5 Hz..21.5 kHz & -48..+1.6 dB)
-            int maxTrig = ringLen - targetSpan - 1;
-            int start = 0;
-            if (liveHz > 0.0 && maxTrig > 2)
+            // Dynamic sub-sample hysteresis rising zero-crossing trigger + seamless frequency-proportional flow
+            double startL = 0.0;
+            double startR = 0.0;
+            double beatDiff = Math.Abs(liveRHz - liveHz);
+            if (liveHz > 0.0)
             {
-                float snapPeak = 0.0f;
-                for (int i = 0; i < ringLen; i += 4)
+                double visCycPerSec = Math.Min(1.35, Math.Max(0.30, 0.25 + 0.35 * Math.Log10(1.0 + liveHz)));
+                mTravelPhaseL = (mTravelPhaseL + dtSec * visCycPerSec) % 1.0;
+
+                double spcL = effSr / liveHz;
+                int padL = (int)Math.Ceiling(spcL) + 2;
+                int maxTrigL = ringLen - targetSpan - padL - 2;
+                if (maxTrigL > 2)
                 {
-                    float a = Math.Abs(mSnapL[i]);
-                    if (a > snapPeak) snapPeak = a;
+                    startL = FindRisingTrigger(mSnapL, ringLen, maxTrigL) + (mTravelPhaseL * spcL);
                 }
-                float armThresh = -Math.Max(0.001f, snapPeak * 0.15f);
-                bool armed = false;
-                for (int i = 1; i < maxTrig; i++)
+                else
                 {
-                    float prev = mSnapL[i - 1];
-                    float cur = mSnapL[i];
-                    if (!armed)
+                    int fallbackTrig = ringLen - targetSpan - 2;
+                    startL = (fallbackTrig > 2) ? FindRisingTrigger(mSnapL, ringLen, fallbackTrig) : 0.0;
+                }
+
+                if (beatDiff > 4.0 && liveRHz > 0.0)
+                {
+                    double ratio = Math.Min(2.5, Math.Max(0.4, liveRHz / liveHz));
+                    mTravelPhaseR = (mTravelPhaseR + dtSec * visCycPerSec * ratio) % 1.0;
+                    double spcR = effSr / liveRHz;
+                    int padR = (int)Math.Ceiling(spcR) + 2;
+                    int maxTrigR = ringLen - targetSpan - padR - 2;
+                    if (maxTrigR > 2)
                     {
-                        if (cur <= armThresh) armed = true;
+                        startR = FindRisingTrigger(mSnapR, ringLen, maxTrigR) + (mTravelPhaseR * spcR);
                     }
-                    else if (prev <= 0.0f && cur > 0.0f)
+                    else
                     {
-                        start = i;
-                        break;
+                        int fallbackTrigR = ringLen - targetSpan - 2;
+                        startR = (fallbackTrigR > 2) ? FindRisingTrigger(mSnapR, ringLen, fallbackTrigR) : 0.0;
                     }
+                }
+                else
+                {
+                    startR = startL;
                 }
             }
 
@@ -642,12 +714,13 @@ namespace VortaAegisPC
             int diffStep = Math.Max(1, targetSpan / 240);
             for (int i = 0; i < targetSpan; i += diffStep)
             {
-                int idx = start + i;
-                if (idx >= ringLen) break;
-                double d = Math.Abs(mSnapL[idx] - mSnapR[idx]);
+                int idxL = (int)Math.Round(startL) + i;
+                int idxR = (int)Math.Round(startR) + i;
+                if (idxL >= ringLen || idxR >= ringLen) break;
+                double d = Math.Abs(mSnapL[idxL] - mSnapR[idxR]);
                 if (d > maxDiffLR) maxDiffLR = d;
             }
-            bool showR = maxDiffLR > 0.03;
+            bool showR = (beatDiff > 0.05) || (maxDiffLR > 0.03);
 
             bool guarded = (p.NoiseType == 2 && dsp.IsUltrasonicGuarded);
             bool antiOrHarmonic = p.IsAntiPhase || p.Freq2 > 0f || (compAvail && !wantFund);
@@ -677,7 +750,8 @@ namespace VortaAegisPC
             mWaveFillL.Visibility = Visibility.Visible;
 
             double xStep = w / (double)(DRAW_POINTS - 1);
-            double sampleStep = (double)targetSpan / (double)(DRAW_POINTS - 1);
+            double sampleStep = (double)(targetSpan - 1) / (double)(DRAW_POINTS - 1);
+            int maxIdx = ringLen - 2;
 
             using (StreamGeometryContext ctxL = mGeoL.Open())
             using (StreamGeometryContext ctxFill = mGeoFillL.Open())
@@ -685,11 +759,14 @@ namespace VortaAegisPC
                 ctxFill.BeginFigure(new Point(0, midY), true, true);
                 for (int pt = 0; pt < DRAW_POINTS; pt++)
                 {
-                    int idx = start + (int)Math.Round(pt * sampleStep);
-                    if (idx >= ringLen) idx = ringLen - 1;
-                    float s = mSnapL[idx];
-                    if (float.IsNaN(s) || float.IsInfinity(s)) s = 0.0f;
-                    if (s > 1.0f) s = 1.0f; else if (s < -1.0f) s = -1.0f;
+                    double posL = startL + (pt * sampleStep);
+                    int i0 = (int)posL;
+                    if (i0 < 0) i0 = 0;
+                    if (i0 > maxIdx) i0 = maxIdx;
+                    double frac = posL - i0;
+                    double s = mSnapL[i0] + (mSnapL[i0 + 1] - mSnapL[i0]) * frac;
+                    if (double.IsNaN(s) || double.IsInfinity(s)) s = 0.0;
+                    if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
                     double x = pt * xStep;
                     double y = midY - (s * ampY);
                     Point pnt = new Point(x, y);
@@ -709,11 +786,14 @@ namespace VortaAegisPC
                 {
                     for (int pt = 0; pt < DRAW_POINTS; pt++)
                     {
-                        int idx = start + (int)Math.Round(pt * sampleStep);
-                        if (idx >= ringLen) idx = ringLen - 1;
-                        float s = mSnapR[idx];
-                        if (float.IsNaN(s) || float.IsInfinity(s)) s = 0.0f;
-                        if (s > 1.0f) s = 1.0f; else if (s < -1.0f) s = -1.0f;
+                        double posR = startR + (pt * sampleStep);
+                        int i0 = (int)posR;
+                        if (i0 < 0) i0 = 0;
+                        if (i0 > maxIdx) i0 = maxIdx;
+                        double frac = posR - i0;
+                        double s = mSnapR[i0] + (mSnapR[i0 + 1] - mSnapR[i0]) * frac;
+                        if (double.IsNaN(s) || double.IsInfinity(s)) s = 0.0;
+                        if (s > 1.0) s = 1.0; else if (s < -1.0) s = -1.0;
                         Point pnt = new Point(pt * xStep, midY - (s * ampY));
                         if (pt == 0) ctxR.BeginFigure(pnt, false, false);
                         else ctxR.LineTo(pnt, true, false);
@@ -755,13 +835,19 @@ namespace VortaAegisPC
             }
             else if (showR)
             {
-                mTxtLegend.Text = p.BinauralBeat > 0f ? "L/R 바이노럴 위상 차" : "듀얼 채널 스테레오";
+                if (p.IsBinauralRamp) mTxtLegend.Text = "L/R 바이노럴 램프";
+                else mTxtLegend.Text = p.BinauralBeat > 0f ? "L/R 바이노럴 위상 차" : "듀얼 채널 스테레오";
                 mTxtLegend.Foreground = ThemePalette.BrCyan;
             }
             else if (p.IsAntiPhase)
             {
                 mTxtLegend.Text = "180° 역위상 상쇄 파형";
                 mTxtLegend.Foreground = ThemePalette.BrAmber;
+            }
+            else if (liveBeat > 0.0)
+            {
+                mTxtLegend.Text = "L/R 바이노럴 리듬 파형";
+                mTxtLegend.Foreground = ThemePalette.BrCyan;
             }
             else
             {
@@ -1064,6 +1150,59 @@ namespace VortaAegisPC
             updCard.Child = ucCol;
             body.Children.Add(updCard);
 
+            // Card 2B: Daily Safety & Comfort Settings
+            Border safetyCard = MakeSectionCard();
+            safetyCard.Margin = new Thickness(0, 12, 0, 0);
+            StackPanel scCol = new StackPanel();
+            scCol.Children.Add(MakeSectionHeader("일상 안전 · 편의 설정"));
+
+            TextBlock perVolTxt = null;
+            Border perVolPill = null;
+            perVolPill = MakeActionChip(
+                mCtrl.State.RememberPerPresetVolume ? "켜짐" : "꺼짐",
+                mCtrl.State.RememberPerPresetVolume ? ThemePalette.BrActiveBg : ThemePalette.BrSurfaceHigh,
+                mCtrl.State.RememberPerPresetVolume ? ThemePalette.BrActive : ThemePalette.BrOutline,
+                mCtrl.State.RememberPerPresetVolume ? ThemePalette.BrActive : ThemePalette.BrTextTertiary,
+                out perVolTxt,
+                delegate
+                {
+                    bool next = !mCtrl.State.RememberPerPresetVolume;
+                    mCtrl.ApplyRememberPerPresetVolume(next);
+                    perVolTxt.Text = next ? "켜짐" : "꺼짐";
+                    perVolTxt.Foreground = next ? ThemePalette.BrActive : ThemePalette.BrTextTertiary;
+                    perVolPill.Background = next ? ThemePalette.BrActiveBg : ThemePalette.BrSurfaceHigh;
+                    perVolPill.BorderBrush = next ? ThemePalette.BrActive : ThemePalette.BrOutline;
+                });
+            scCol.Children.Add(BuildSettingRow(
+                "프리셋별 볼륨 기억 · 과볼륨 자동 보호",
+                "수면·두통 모드로 전환 시 75% 초과 고볼륨을 안전 수준으로 자동 낮춤",
+                perVolPill, 8));
+
+            TextBlock fadeTxt = null;
+            Border fadePill = null;
+            fadePill = MakeActionChip(
+                mCtrl.State.GentleSleepFade ? "켜짐" : "꺼짐",
+                mCtrl.State.GentleSleepFade ? ThemePalette.BrActiveBg : ThemePalette.BrSurfaceHigh,
+                mCtrl.State.GentleSleepFade ? ThemePalette.BrActive : ThemePalette.BrOutline,
+                mCtrl.State.GentleSleepFade ? ThemePalette.BrActive : ThemePalette.BrTextTertiary,
+                out fadeTxt,
+                delegate
+                {
+                    bool next = !mCtrl.State.GentleSleepFade;
+                    mCtrl.ApplyGentleSleepFade(next);
+                    fadeTxt.Text = next ? "켜짐" : "꺼짐";
+                    fadeTxt.Foreground = next ? ThemePalette.BrActive : ThemePalette.BrTextTertiary;
+                    fadePill.Background = next ? ThemePalette.BrActiveBg : ThemePalette.BrSurfaceHigh;
+                    fadePill.BorderBrush = next ? ThemePalette.BrActive : ThemePalette.BrOutline;
+                });
+            scCol.Children.Add(BuildSettingRow(
+                "타이머 · 코스 종료 20초 부드러운 페이드아웃",
+                "갑자기 뚝 끊겨 놀라지 않도록 20초 동안 서서히 음량을 낮춰 종료",
+                fadePill, 8));
+
+            safetyCard.Child = scCol;
+            body.Children.Add(safetyCard);
+
             // Card 3: License, Copyright & Commercial Certification
             Border licCard = MakeSectionCard();
             licCard.Margin = new Thickness(0, 12, 0, 0);
@@ -1233,6 +1372,39 @@ namespace VortaAegisPC
             };
         }
 
+        private static Grid BuildSettingRow(string title, string sub, Border toggleBtn, double topMargin)
+        {
+            Grid g = new Grid();
+            g.Margin = new Thickness(0, topMargin, 0, 0);
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            StackPanel left = new StackPanel();
+            left.Margin = new Thickness(0, 0, 10, 0);
+            left.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontSize = 11.5,
+                FontWeight = FontWeights.Bold,
+                Foreground = ThemePalette.BrTextPrimary,
+                TextWrapping = TextWrapping.Wrap
+            });
+            left.Children.Add(new TextBlock
+            {
+                Text = sub,
+                FontSize = 10.2,
+                Foreground = ThemePalette.BrTextSecondary,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 2, 0, 0)
+            });
+            g.Children.Add(left);
+
+            toggleBtn.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(toggleBtn, 1);
+            g.Children.Add(toggleBtn);
+            return g;
+        }
+
         private static Border MakeActionChip(string text, Brush bg, Brush border, Brush fg, out TextBlock lbl, Action onClick)
         {
             Border b = new Border();
@@ -1262,6 +1434,309 @@ namespace VortaAegisPC
         }
     }
 
+    public sealed class BeginnerGuideWindow : Window
+    {
+        public BeginnerGuideWindow(Window owner)
+        {
+            Title = "보르타 이지스 · 쉬운 용어 및 선택 가이드";
+            Width = 540;
+            Height = 620;
+            MinWidth = 420;
+            MinHeight = 460;
+            ResizeMode = ResizeMode.CanResize;
+            WindowStyle = WindowStyle.None;
+            Background = ThemePalette.BrBg;
+            FontFamily = ThemePalette.FontUi;
+            UseLayoutRounding = true;
+            TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+
+            if (owner != null && owner.IsVisible)
+            {
+                Owner = owner;
+                WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            }
+            else
+            {
+                WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            }
+
+            WindowChrome chrome = new WindowChrome();
+            chrome.CaptionHeight = 40;
+            chrome.ResizeBorderThickness = new Thickness(6);
+            chrome.CornerRadius = new CornerRadius(10);
+            chrome.GlassFrameThickness = new Thickness(0);
+            chrome.UseAeroCaptionButtons = false;
+            WindowChrome.SetWindowChrome(this, chrome);
+
+            Border outer = new Border
+            {
+                Background = ThemePalette.BrBg,
+                BorderBrush = ThemePalette.BrOutline,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10)
+            };
+
+            Grid root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            Border titleBar = new Border
+            {
+                Background = ThemePalette.BrSurface,
+                BorderBrush = ThemePalette.BrOutline,
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Padding = new Thickness(14, 0, 10, 0)
+            };
+            Grid tbGrid = new Grid();
+            tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            tbGrid.Children.Add(new TextBlock
+            {
+                Text = "쉬운 용어 · 시나리오 선택 가이드",
+                FontSize = 12.5,
+                FontWeight = FontWeights.Bold,
+                Foreground = ThemePalette.BrAmber,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            Border btnClose = new Border
+            {
+                Width = 30,
+                Height = 26,
+                CornerRadius = new CornerRadius(6),
+                Background = Brushes.Transparent,
+                Cursor = Cursors.Hand,
+                ToolTip = "창 닫기 (Esc)",
+                Child = ThemePalette.MakeIcon("M 2.5,2.5 L 9.5,9.5 M 9.5,2.5 L 2.5,9.5", 12, ThemePalette.BrTextSecondary, true, 1.5)
+            };
+            btnClose.MouseEnter += delegate { btnClose.Background = ThemePalette.BrCloseHover; };
+            btnClose.MouseLeave += delegate { btnClose.Background = Brushes.Transparent; };
+            btnClose.MouseLeftButtonUp += delegate { Close(); };
+            WindowChrome.SetIsHitTestVisibleInChrome(btnClose, true);
+            Grid.SetColumn(btnClose, 1);
+            tbGrid.Children.Add(btnClose);
+            titleBar.Child = tbGrid;
+            root.Children.Add(titleBar);
+
+            ScrollViewer sv = new ScrollViewer();
+            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            sv.Resources.Add(typeof(ScrollBar), ThemePalette.CreateDarkScrollBarStyle());
+            Grid.SetRow(sv, 1);
+
+            Border bodyCard = new Border
+            {
+                Background = ThemePalette.BrSurface,
+                BorderBrush = ThemePalette.BrOutline,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(16, 14, 16, 14),
+                Margin = new Thickness(14)
+            };
+            bodyCard.Child = new TextBlock
+            {
+                Text = PresetAdvisor.GetBeginnerGlossaryText(),
+                FontSize = 12,
+                Foreground = ThemePalette.BrTextPrimary,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = 19.5
+            };
+            sv.Content = bodyCard;
+            root.Children.Add(sv);
+
+            outer.Child = root;
+            Content = outer;
+            PreviewKeyDown += delegate(object s, KeyEventArgs e)
+            {
+                if (e.Key == Key.Escape)
+                {
+                    e.Handled = true;
+                    Close();
+                }
+            };
+        }
+    }
+
+    public sealed class PresetDetailWindow : Window
+    {
+        public PresetDetailWindow(IAppHostController ctrl, PresetItem preset, Window owner)
+        {
+            Title = "시나리오 쉬운 설명";
+            Width = 500;
+            Height = 470;
+            MinWidth = 380;
+            MinHeight = 360;
+            ResizeMode = ResizeMode.CanResize;
+            WindowStyle = WindowStyle.None;
+            Background = ThemePalette.BrBg;
+            FontFamily = ThemePalette.FontUi;
+            UseLayoutRounding = true;
+            TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+
+            if (owner != null && owner.IsVisible)
+            {
+                Owner = owner;
+                WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            }
+            else
+            {
+                WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            }
+
+            WindowChrome chrome = new WindowChrome();
+            chrome.CaptionHeight = 40;
+            chrome.ResizeBorderThickness = new Thickness(6);
+            chrome.CornerRadius = new CornerRadius(10);
+            chrome.GlassFrameThickness = new Thickness(0);
+            chrome.UseAeroCaptionButtons = false;
+            WindowChrome.SetWindowChrome(this, chrome);
+
+            Border outer = new Border
+            {
+                Background = ThemePalette.BrBg,
+                BorderBrush = ThemePalette.BrAmber,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10)
+            };
+
+            Grid root = new Grid();
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            Border titleBar = new Border
+            {
+                Background = ThemePalette.BrSurface,
+                BorderBrush = ThemePalette.BrOutline,
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Padding = new Thickness(14, 0, 10, 0)
+            };
+            Grid tbGrid = new Grid();
+            tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            tbGrid.Children.Add(new TextBlock
+            {
+                Text = preset.ShortCode + " · " + TabSyncPolicy.TAB_SHORT_NAMES[TabSyncPolicy.ClampTabIndex(preset.TabIndex)] + " · " + preset.Badge,
+                FontFamily = ThemePalette.FontMono,
+                FontSize = 11.5,
+                FontWeight = FontWeights.Bold,
+                Foreground = ThemePalette.BrAmber,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            Border btnClose = new Border
+            {
+                Width = 30,
+                Height = 26,
+                CornerRadius = new CornerRadius(6),
+                Background = Brushes.Transparent,
+                Cursor = Cursors.Hand,
+                ToolTip = "창 닫기 (Esc)",
+                Child = ThemePalette.MakeIcon("M 2.5,2.5 L 9.5,9.5 M 9.5,2.5 L 2.5,9.5", 12, ThemePalette.BrTextSecondary, true, 1.5)
+            };
+            btnClose.MouseEnter += delegate { btnClose.Background = ThemePalette.BrCloseHover; };
+            btnClose.MouseLeave += delegate { btnClose.Background = Brushes.Transparent; };
+            btnClose.MouseLeftButtonUp += delegate { Close(); };
+            WindowChrome.SetIsHitTestVisibleInChrome(btnClose, true);
+            Grid.SetColumn(btnClose, 1);
+            tbGrid.Children.Add(btnClose);
+            titleBar.Child = tbGrid;
+            root.Children.Add(titleBar);
+
+            ScrollViewer sv = new ScrollViewer();
+            sv.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            sv.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            sv.Resources.Add(typeof(ScrollBar), ThemePalette.CreateDarkScrollBarStyle());
+            Grid.SetRow(sv, 1);
+
+            StackPanel body = new StackPanel { Margin = new Thickness(16, 14, 16, 10) };
+            body.Children.Add(new TextBlock
+            {
+                Text = preset.Title,
+                FontSize = 16,
+                FontWeight = FontWeights.Bold,
+                Foreground = ThemePalette.BrTextPrimary,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+            body.Children.Add(new TextBlock
+            {
+                Text = PresetAdvisor.BuildPlainExplanation(preset),
+                FontSize = 12,
+                Foreground = ThemePalette.BrTextSecondary,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = 19
+            });
+            sv.Content = body;
+            root.Children.Add(sv);
+
+            Grid footer = new Grid { Margin = new Thickness(16, 6, 16, 14) };
+            footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            Border playBtn = new Border
+            {
+                Background = ThemePalette.BrActiveBg,
+                BorderBrush = ThemePalette.BrActive,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(14, 7, 14, 7),
+                Margin = new Thickness(0, 0, 8, 0),
+                Cursor = Cursors.Hand,
+                Child = new TextBlock
+                {
+                    Text = "이 시나리오 바로 재생",
+                    FontSize = 11.5,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = ThemePalette.BrActive
+                }
+            };
+            playBtn.MouseLeftButtonUp += delegate
+            {
+                if (ctrl != null) ctrl.PlayPreset(preset);
+                Close();
+            };
+            Grid.SetColumn(playBtn, 1);
+            footer.Children.Add(playBtn);
+
+            Border closeFoot = new Border
+            {
+                Background = ThemePalette.BrSurfaceHigh,
+                BorderBrush = ThemePalette.BrOutline,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(14, 7, 14, 7),
+                Cursor = Cursors.Hand,
+                Child = new TextBlock
+                {
+                    Text = "닫기",
+                    FontSize = 11.5,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = ThemePalette.BrTextSecondary
+                }
+            };
+            closeFoot.MouseLeftButtonUp += delegate { Close(); };
+            Grid.SetColumn(closeFoot, 2);
+            footer.Children.Add(closeFoot);
+            Grid.SetRow(footer, 2);
+            root.Children.Add(footer);
+
+            outer.Child = root;
+            Content = outer;
+            PreviewKeyDown += delegate(object s, KeyEventArgs e)
+            {
+                if (e.Key == Key.Escape)
+                {
+                    e.Handled = true;
+                    Close();
+                }
+            };
+        }
+    }
+
     public sealed class CompanionWindow : Window
     {
         public const double MIN_WINDOW_WIDTH = 400.0;
@@ -1273,9 +1748,10 @@ namespace VortaAegisPC
         private static readonly string[] DETENT_PCTS = new string[] { "15%", "30%", "50%", "80%", "100%", "120%" };
         private static readonly string[] DETENT_TAGS = new string[] { "영상", "작업", "병행", "단독", "최대", "증폭" };
         private static readonly string[] PROFILE_LABELS = new string[] { "PC 스피커 보정", "이어폰·헤드폰", "순수 원음·DAC" };
+        private static readonly string[] AMBIENT_LABELS = new string[] { "꺼짐", "브라운", "핑크", "빗소리" };
         private static readonly int[] TIMER_VALUES = new int[] { 0, 15, 30, 60, 90 };
         private static readonly string[] TIMER_LABELS = new string[] { "끄기", "15분", "30분", "60분", "90분" };
-        private static readonly int[] DEFAULT_QUICK_DOCK_IDS = new int[] { 2, 101, 19, 102, 25, 13 };
+        private static readonly int[] DEFAULT_QUICK_DOCK_IDS = new int[] { 201, 35, 102, 208, 101, 13 };
 
         private readonly IAppHostController mCtrl;
         private readonly DispatcherTimer mScopeTimer;
@@ -1296,6 +1772,11 @@ namespace VortaAegisPC
         private Border mVerBadge;
         private Border mLayoutBtn;
         private TextBlock mTxtLayoutBtn;
+        private Border mGuideBtn;
+        private TextBlock mTxtGuideBtn;
+        private Border mAboutBtn;
+        private Border mMiniBtn;
+        private TextBlock mTxtMiniBtn;
         private Border mTopmostBtn;
         private TextBlock mTxtTopmost;
         private Border mMaxBtn;
@@ -1343,7 +1824,19 @@ namespace VortaAegisPC
         private TextBlock mTxtDockClipBadge;
         private TextBlock mTxtSessionElapsed;
         private TextBlock mTxtSessionDevice;
+        private TextBlock mTxtQuickDockSubtitle;
         private UniformGrid mQuickDockGrid;
+
+        // Active Routine Banner & Ambient Bed Mixer
+        private Border mRoutineBanner;
+        private TextBlock mTxtRoutineBanner;
+        private Border mBtnRoutineNext;
+        private TextBlock mTxtRoutineNext;
+        private readonly List<Border> mAmbientChips = new List<Border>();
+        private readonly List<TextBlock> mAmbientLabels = new List<TextBlock>();
+        private Slider mSeekAmbientMix;
+        private TextBlock mTxtAmbientMix;
+        private bool mSuppressAmbientCallback;
 
         // Volume & Amplifier Detents
         private Border mBtnMute;
@@ -1386,8 +1879,11 @@ namespace VortaAegisPC
         private bool mFavoritesOnly = false;
         private WrapPanel mTabWrap;
         private readonly List<Border> mTabChips = new List<Border>();
+        private Grid mCourseGrid;
+        private readonly List<Border> mCourseCards = new List<Border>();
+        private readonly List<string> mCourseIds = new List<string>();
         private ScrollViewer mPresetScroll;
-        private UniformGrid mPresetGrid;
+        private StackPanel mPresetSectionsPanel;
 
         private TextBlock mTxtFooterHint;
 
@@ -1566,12 +2062,11 @@ namespace VortaAegisPC
 
         private void UpdateBrowserColumns(double browserW)
         {
-            if (mPresetGrid == null || double.IsNaN(browserW) || browserW <= 0) return;
+            if (mPresetSectionsPanel == null || double.IsNaN(browserW) || browserW <= 0) return;
             int cols = (browserW >= BROWSER_GRID2_WIDTH) ? 2 : 1;
             if (cols != mPresetCols)
             {
                 mPresetCols = cols;
-                mPresetGrid.Columns = cols;
                 RenderPresetCards();
             }
         }
@@ -1674,6 +2169,21 @@ namespace VortaAegisPC
             {
                 mVerBadge.Visibility = (width >= 500.0) ? Visibility.Visible : Visibility.Collapsed;
             }
+            bool ultraCompact = width < 520.0;
+            if (mAboutBtn != null)
+            {
+                mAboutBtn.Visibility = ultraCompact ? Visibility.Collapsed : Visibility.Visible;
+            }
+            if (mTxtGuideBtn != null && mGuideBtn != null)
+            {
+                mTxtGuideBtn.Text = ultraCompact ? "가이드" : "쉬운 가이드";
+                mGuideBtn.Padding = ultraCompact ? new Thickness(7, 0, 7, 0) : new Thickness(9, 0, 9, 0);
+            }
+            if (mTxtMiniBtn != null && mMiniBtn != null)
+            {
+                mTxtMiniBtn.Text = ultraCompact ? "미니" : "미니 바";
+                mMiniBtn.Padding = ultraCompact ? new Thickness(7, 0, 7, 0) : new Thickness(9, 0, 9, 0);
+            }
 
             if (mTxtFooterHint != null)
             {
@@ -1750,18 +2260,28 @@ namespace VortaAegisPC
             right.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(right, 1);
 
-            Border btnAbout = CreatePillChip("정보", delegate { mCtrl.ShowAboutDialog(); });
-            btnAbout.Height = 26;
-            btnAbout.Margin = new Thickness(0, 0, 5, 0);
-            btnAbout.ToolTip = "보르타 소개 · 업데이트 확인 · 라이선스";
-            WindowChrome.SetIsHitTestVisibleInChrome(btnAbout, true);
-            right.Children.Add(btnAbout);
+            mGuideBtn = CreatePillChipWithLabel("쉬운 가이드", out mTxtGuideBtn, delegate { mCtrl.ShowBeginnerGuideDialog(); });
+            mGuideBtn.Height = 26;
+            mGuideBtn.Margin = new Thickness(0, 0, 5, 0);
+            mGuideBtn.Background = ThemePalette.BrAmberBg;
+            mGuideBtn.BorderBrush = ThemePalette.BrAmber;
+            mTxtGuideBtn.Foreground = ThemePalette.BrAmber;
+            mGuideBtn.ToolTip = "포모도로·바이노럴·뇌파 등 쉬운 용어 가이드";
+            WindowChrome.SetIsHitTestVisibleInChrome(mGuideBtn, true);
+            right.Children.Add(mGuideBtn);
 
-            Border btnMini = CreatePillChip("미니 바", delegate { mCtrl.SwitchToMiniMode(true); });
-            btnMini.Height = 26;
-            btnMini.Margin = new Thickness(0, 0, 5, 0);
-            WindowChrome.SetIsHitTestVisibleInChrome(btnMini, true);
-            right.Children.Add(btnMini);
+            mAboutBtn = CreatePillChip("정보", delegate { mCtrl.ShowAboutDialog(); });
+            mAboutBtn.Height = 26;
+            mAboutBtn.Margin = new Thickness(0, 0, 5, 0);
+            mAboutBtn.ToolTip = "보르타 소개 · 업데이트 확인 · 라이선스";
+            WindowChrome.SetIsHitTestVisibleInChrome(mAboutBtn, true);
+            right.Children.Add(mAboutBtn);
+
+            mMiniBtn = CreatePillChipWithLabel("미니 바", out mTxtMiniBtn, delegate { mCtrl.SwitchToMiniMode(true); });
+            mMiniBtn.Height = 26;
+            mMiniBtn.Margin = new Thickness(0, 0, 5, 0);
+            WindowChrome.SetIsHitTestVisibleInChrome(mMiniBtn, true);
+            right.Children.Add(mMiniBtn);
 
             mLayoutBtn = CreatePillChipWithLabel("슬림", out mTxtLayoutBtn, delegate
             {
@@ -2013,68 +2533,67 @@ namespace VortaAegisPC
             jumpZone.Children.Add(heroRow);
             col.Children.Add(jumpZone);
 
-            // Row 3: Upgraded Live Oscilloscope Viewport + Sweep Bar
-            mScope = new LiveWaveformScope();
-            mScope.SetCompositeMode(mCtrl.State.ScopeShowComposite);
-            mScope.CompositeModeToggled += delegate(bool showComp)
+            // Active One-Tap Course Routine Banner (collapsed unless routine running)
+            mRoutineBanner = new Border();
+            mRoutineBanner.Background = ThemePalette.BrActiveBg;
+            mRoutineBanner.BorderBrush = ThemePalette.BrActive;
+            mRoutineBanner.BorderThickness = new Thickness(1);
+            mRoutineBanner.CornerRadius = new CornerRadius(7);
+            mRoutineBanner.Padding = new Thickness(8, 5, 8, 5);
+            mRoutineBanner.Margin = new Thickness(0, 0, 0, 8);
+            mRoutineBanner.Visibility = Visibility.Collapsed;
+
+            Grid rbGrid = new Grid();
+            rbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            rbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            rbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            mTxtRoutineBanner = new TextBlock
             {
-                mCtrl.SetScopeShowComposite(showComp);
+                FontFamily = ThemePalette.FontMono,
+                FontSize = 10.5,
+                FontWeight = FontWeights.Bold,
+                Foreground = ThemePalette.BrActive,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
             };
-            mScope.Margin = new Thickness(0, 0, 0, 8);
-            col.Children.Add(mScope);
+            rbGrid.Children.Add(mTxtRoutineBanner);
 
-            mSweepPanel = new Grid();
-            mSweepPanel.Margin = new Thickness(0, 0, 0, 8);
-            mSweepPanel.Visibility = Visibility.Collapsed;
-            mSweepPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            mSweepPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            mSweepPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            mTxtSweepLeft = new TextBlock { FontFamily = ThemePalette.FontMono, FontSize = 9.5, Foreground = ThemePalette.BrAmber };
-            mSweepPanel.Children.Add(mTxtSweepLeft);
-
-            mSweepTrack = new Border();
-            mSweepTrack.Height = 5;
-            mSweepTrack.CornerRadius = new CornerRadius(2.5);
-            mSweepTrack.Background = ThemePalette.BrSurfaceHigh;
-            mSweepTrack.Margin = new Thickness(6, 0, 6, 0);
-            mSweepTrack.VerticalAlignment = VerticalAlignment.Center;
-            mSweepFill = new Border();
-            mSweepFill.Height = 5;
-            mSweepFill.HorizontalAlignment = HorizontalAlignment.Left;
-            mSweepFill.CornerRadius = new CornerRadius(2.5);
-            mSweepFill.Background = ThemePalette.BrActive;
-            mSweepFill.Width = 0;
-            mSweepTrack.Child = mSweepFill;
-            Grid.SetColumn(mSweepTrack, 1);
-            mSweepPanel.Children.Add(mSweepTrack);
-
-            mTxtSweepRight = new TextBlock { FontFamily = ThemePalette.FontMono, FontSize = 9.5, Foreground = ThemePalette.BrAmber };
-            Grid.SetColumn(mTxtSweepRight, 2);
-            mSweepPanel.Children.Add(mTxtSweepRight);
-            col.Children.Add(mSweepPanel);
-
-            // Row 4: 4-Chip Structured Signal Telemetry Strip
-            Grid telGrid = new Grid();
-            telGrid.Margin = new Thickness(0, 0, 0, 9);
-            for (int c = 0; c < 4; c++)
+            mBtnRoutineNext = CreatePillChipWithLabel("다음 단계", out mTxtRoutineNext, delegate
             {
-                telGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            }
-            telGrid.Children.Add(BuildTelemetryCell("위상·채널", "좌우 채널 위상차 및 출력 구조", out mTelPhase, 0, true));
-            telGrid.Children.Add(BuildTelemetryCell("파형·변조", "적용 중인 변조 방식 또는 노이즈 타입", out mTelMod, 1, true));
-            telGrid.Children.Add(BuildTelemetryCell("PC 음향", "선택된 PC 스피커/이어폰 보정 프로파일", out mTelProfile, 2, true));
-            telGrid.Children.Add(BuildTelemetryCell("실출력 레벨", "현재 RMS 출력 레벨 및 리미터 감쇄 상태", out mTelLevel, 3, false));
-            col.Children.Add(telGrid);
+                mCtrl.AdvanceRoutineStep();
+            });
+            mBtnRoutineNext.Height = 22;
+            mBtnRoutineNext.Padding = new Thickness(7, 0, 7, 0);
+            mBtnRoutineNext.Margin = new Thickness(6, 0, 4, 0);
+            mBtnRoutineNext.BorderBrush = ThemePalette.BrActive;
+            mTxtRoutineNext.FontSize = 9.5;
+            mTxtRoutineNext.Foreground = ThemePalette.BrActive;
+            Grid.SetColumn(mBtnRoutineNext, 1);
+            rbGrid.Children.Add(mBtnRoutineNext);
 
-            // Row 5: Optimized Now-Playing Info Card
+            TextBlock stopRTxt;
+            Border stopRBtn = CreatePillChipWithLabel("해제", out stopRTxt, delegate
+            {
+                mCtrl.StopRoutineOnly();
+            });
+            stopRBtn.Height = 22;
+            stopRBtn.Padding = new Thickness(6, 0, 6, 0);
+            stopRTxt.FontSize = 9.5;
+            Grid.SetColumn(stopRBtn, 2);
+            rbGrid.Children.Add(stopRBtn);
+
+            mRoutineBanner.Child = rbGrid;
+            col.Children.Add(mRoutineBanner);
+
+            // Row 3: Now-Playing Info Card (right below status/hero header)
             Border infoBox = new Border();
             infoBox.Background = ThemePalette.BrSurfaceCard;
             infoBox.BorderBrush = ThemePalette.BrOutline;
             infoBox.BorderThickness = new Thickness(1);
             infoBox.CornerRadius = new CornerRadius(9);
             infoBox.Padding = new Thickness(11, 9, 11, 10);
-            infoBox.Margin = new Thickness(0, 0, 0, 10);
+            infoBox.Margin = new Thickness(0, 0, 0, 8);
 
             StackPanel infoCol = new StackPanel();
 
@@ -2151,7 +2670,48 @@ namespace VortaAegisPC
             infoBox.Child = infoCol;
             col.Children.Add(infoBox);
 
-            // Row 6: Independent Volume Section (0..120% with Wheel)
+            // Row 4: Live Auto-Animating Oscilloscope Waveform + Sweep Bar (directly below Info Card)
+            mScope = new LiveWaveformScope();
+            mScope.SetCompositeMode(mCtrl.State.ScopeShowComposite);
+            mScope.CompositeModeToggled += delegate(bool showComp)
+            {
+                mCtrl.SetScopeShowComposite(showComp);
+            };
+            mScope.Margin = new Thickness(0, 0, 0, 8);
+            col.Children.Add(mScope);
+
+            mSweepPanel = new Grid();
+            mSweepPanel.Margin = new Thickness(0, 0, 0, 8);
+            mSweepPanel.Visibility = Visibility.Collapsed;
+            mSweepPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            mSweepPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            mSweepPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            mTxtSweepLeft = new TextBlock { FontFamily = ThemePalette.FontMono, FontSize = 9.5, Foreground = ThemePalette.BrAmber };
+            mSweepPanel.Children.Add(mTxtSweepLeft);
+
+            mSweepTrack = new Border();
+            mSweepTrack.Height = 5;
+            mSweepTrack.CornerRadius = new CornerRadius(2.5);
+            mSweepTrack.Background = ThemePalette.BrSurfaceHigh;
+            mSweepTrack.Margin = new Thickness(6, 0, 6, 0);
+            mSweepTrack.VerticalAlignment = VerticalAlignment.Center;
+            mSweepFill = new Border();
+            mSweepFill.Height = 5;
+            mSweepFill.HorizontalAlignment = HorizontalAlignment.Left;
+            mSweepFill.CornerRadius = new CornerRadius(2.5);
+            mSweepFill.Background = ThemePalette.BrActive;
+            mSweepFill.Width = 0;
+            mSweepTrack.Child = mSweepFill;
+            Grid.SetColumn(mSweepTrack, 1);
+            mSweepPanel.Children.Add(mSweepTrack);
+
+            mTxtSweepRight = new TextBlock { FontFamily = ThemePalette.FontMono, FontSize = 9.5, Foreground = ThemePalette.BrAmber };
+            Grid.SetColumn(mTxtSweepRight, 2);
+            mSweepPanel.Children.Add(mTxtSweepRight);
+            col.Children.Add(mSweepPanel);
+
+            // Row 5: Independent Volume Section (directly below Waveform Scope, 0..120% with Wheel)
             StackPanel volSection = new StackPanel();
             volSection.Background = Brushes.Transparent;
             volSection.PreviewMouseWheel += delegate(object s, MouseWheelEventArgs e)
@@ -2367,6 +2927,19 @@ namespace VortaAegisPC
             volSection.Children.Add(detentGrid);
             col.Children.Add(volSection);
 
+            // Row 6: 4-Chip Structured Signal Telemetry Strip (compact secondary telemetry below volume)
+            Grid telGrid = new Grid();
+            telGrid.Margin = new Thickness(0, 0, 0, 9);
+            for (int c = 0; c < 4; c++)
+            {
+                telGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            }
+            telGrid.Children.Add(BuildTelemetryCell("위상·채널", "좌우 채널 위상차 및 출력 구조", out mTelPhase, 0, true));
+            telGrid.Children.Add(BuildTelemetryCell("파형·변조", "적용 중인 변조 방식 또는 노이즈 타입", out mTelMod, 1, true));
+            telGrid.Children.Add(BuildTelemetryCell("PC 음향", "선택된 PC 스피커/이어폰 보정 프로파일", out mTelProfile, 2, true));
+            telGrid.Children.Add(BuildTelemetryCell("실출력 레벨", "현재 RMS 출력 레벨 및 리미터 감쇄 상태", out mTelLevel, 3, false));
+            col.Children.Add(telGrid);
+
             // Row 7: Output device + PC Acoustics profile
             mComboDevice = new ComboBox();
             mComboDevice.Style = ThemePalette.CreateDarkComboStyle();
@@ -2455,6 +3028,80 @@ namespace VortaAegisPC
                 mTimerLabels.Add(tlbl);
             }
             col.Children.Add(timerRow);
+
+            // Row 8B: Stereo Ambient Soundscape Bed Blender (Off / Brown / Pink / Rain 0..60%)
+            Grid ambRow = new Grid();
+            ambRow.Margin = new Thickness(0, 0, 0, 10);
+            ambRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            for (int a = 0; a < AMBIENT_LABELS.Length; a++)
+            {
+                ambRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            }
+            ambRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            ambRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            TextBlock aHdr = new TextBlock
+            {
+                Text = "배경음",
+                FontSize = 10.5,
+                FontWeight = FontWeights.Bold,
+                Foreground = ThemePalette.BrTextTertiary,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0),
+                ToolTip = "주파수 아래에 폭포·바람·빗소리 배경음을 0~60% 비율로 자연스럽게 깔아줍니다"
+            };
+            ambRow.Children.Add(aHdr);
+
+            mAmbientChips.Clear();
+            mAmbientLabels.Clear();
+            for (int a = 0; a < AMBIENT_LABELS.Length; a++)
+            {
+                int ambIdx = a;
+                TextBlock albl;
+                Border achip = CreatePillChipWithLabel(AMBIENT_LABELS[a], out albl, delegate
+                {
+                    mCtrl.ApplyAmbientBed(ambIdx, mCtrl.Dsp.AmbientMixPercent);
+                });
+                achip.Height = 23;
+                achip.Padding = new Thickness(6, 1, 6, 1);
+                albl.FontSize = 9.5;
+                achip.Margin = new Thickness(0, 0, 3, 0);
+                Grid.SetColumn(achip, a + 1);
+                ambRow.Children.Add(achip);
+                mAmbientChips.Add(achip);
+                mAmbientLabels.Add(albl);
+            }
+
+            mSeekAmbientMix = new Slider();
+            mSeekAmbientMix.Minimum = 0;
+            mSeekAmbientMix.Maximum = AegisDspEngine.AMBIENT_MAX_MIX;
+            mSeekAmbientMix.IsSnapToTickEnabled = true;
+            mSeekAmbientMix.TickFrequency = 5;
+            mSeekAmbientMix.Style = ThemePalette.CreateDarkSliderStyle();
+            mSeekAmbientMix.VerticalAlignment = VerticalAlignment.Center;
+            mSeekAmbientMix.Margin = new Thickness(4, 0, 4, 0);
+            mSeekAmbientMix.ValueChanged += delegate(object s, RoutedPropertyChangedEventArgs<double> e)
+            {
+                if (mSuppressAmbientCallback) return;
+                int mixVal = (int)Math.Round(e.NewValue);
+                mCtrl.ApplyAmbientBed(mCtrl.Dsp.AmbientType, mixVal);
+            };
+            Grid.SetColumn(mSeekAmbientMix, AMBIENT_LABELS.Length + 1);
+            ambRow.Children.Add(mSeekAmbientMix);
+
+            mTxtAmbientMix = new TextBlock
+            {
+                Text = "0%",
+                FontFamily = ThemePalette.FontMono,
+                FontSize = 9.5,
+                FontWeight = FontWeights.Bold,
+                Foreground = ThemePalette.BrCyan,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(mTxtAmbientMix, AMBIENT_LABELS.Length + 2);
+            ambRow.Children.Add(mTxtAmbientMix);
+
+            col.Children.Add(ambRow);
 
             // Row 9: Transport CTA Row ([Prev] [Play/Stop] [Next])
             Grid transportGrid = new Grid();
@@ -2587,11 +3234,12 @@ namespace VortaAegisPC
             col.Children.Add(strip);
 
             TextBlock qLbl = new TextBlock();
-            qLbl.Text = "원클릭 빠른 전환 (즐겨찾기 · 최근 · 추천)";
+            qLbl.Text = "원클릭 빠른 전환 (시간대 추천 · 즐겨찾기 · 최근)";
             qLbl.FontSize = 9.5;
             qLbl.FontWeight = FontWeights.Bold;
             qLbl.Foreground = ThemePalette.BrTextTertiary;
             qLbl.Margin = new Thickness(0, 0, 0, 5);
+            mTxtQuickDockSubtitle = qLbl;
             col.Children.Add(qLbl);
 
             mQuickDockGrid = new UniformGrid();
@@ -2694,6 +3342,7 @@ namespace VortaAegisPC
             Grid panel = new Grid();
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
             // Row 0: Search + Pack Filter + Favorites Filter
@@ -2726,7 +3375,7 @@ namespace VortaAegisPC
             sg.Children.Add(magIcon);
 
             mSearchPlaceholder = new TextBlock();
-            mSearchPlaceholder.Text = "프리셋 검색 (집중, 브라운, 이명, 수면...)";
+            mSearchPlaceholder.Text = "검색 (포모도로, 잠, 헬스, 워밍업, 40Hz, 브라운...)";
             mSearchPlaceholder.FontSize = 11.5;
             mSearchPlaceholder.Foreground = ThemePalette.BrTextTertiary;
             mSearchPlaceholder.VerticalAlignment = VerticalAlignment.Center;
@@ -2768,7 +3417,7 @@ namespace VortaAegisPC
             sg.Children.Add(mClearSearchBtn);
 
             mTxtMatchCount = new TextBlock();
-            mTxtMatchCount.Text = "64종";
+            mTxtMatchCount.Text = "88종";
             mTxtMatchCount.FontFamily = ThemePalette.FontMono;
             mTxtMatchCount.FontSize = 10;
             mTxtMatchCount.Foreground = ThemePalette.BrTextTertiary;
@@ -2780,7 +3429,7 @@ namespace VortaAegisPC
             searchBorder.Child = sg;
             topBar.Children.Add(searchBorder);
 
-            mPackFilterBtn = CreatePillChipWithLabel("전체 64", out mTxtPackFilter, delegate
+            mPackFilterBtn = CreatePillChipWithLabel("전체 88", out mTxtPackFilter, delegate
             {
                 CyclePackFilter();
             });
@@ -2789,7 +3438,7 @@ namespace VortaAegisPC
             mPackFilterBtn.Margin = new Thickness(6, 0, 0, 0);
             mPackFilterBtn.Background = ThemePalette.BrSurface;
             mTxtPackFilter.FontSize = 10.5;
-            mPackFilterBtn.ToolTip = "시나리오 팩 필터 전환 (전체 / 코어 48 / PC Pro 상용 팩)";
+            mPackFilterBtn.ToolTip = "시나리오 팩 필터 전환 (전체 88 / 코어 48 / PC Pro 16 / 여정 24)";
             Grid.SetColumn(mPackFilterBtn, 1);
             topBar.Children.Add(mPackFilterBtn);
 
@@ -2864,19 +3513,73 @@ namespace VortaAegisPC
             Grid.SetRow(mTabWrap, 1);
             panel.Children.Add(mTabWrap);
 
-            // Row 2: Responsive Preset Cards List (1 or 2 columns + dark slim scrollbar)
+            // Row 2: Compact One-Tap Auto-Course Strip (4 Curated Journeys)
+            mCourseGrid = new Grid();
+            mCourseGrid.Margin = new Thickness(0, 0, 0, 8);
+            IList<RoutineCourse> allCourses = JourneyOrderPolicy.GetAllRoutines();
+            mCourseCards.Clear();
+            mCourseIds.Clear();
+            for (int c = 0; c < allCourses.Count; c++)
+            {
+                mCourseGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                RoutineCourse rc = allCourses[c];
+                string capId = rc.Id;
+                int capTab = rc.TabIndex;
+
+                Border cc = new Border();
+                cc.Background = ThemePalette.BrSurface;
+                cc.BorderBrush = ThemePalette.BrOutline;
+                cc.BorderThickness = new Thickness(1);
+                cc.CornerRadius = new CornerRadius(7);
+                cc.Padding = new Thickness(8, 5, 8, 5);
+                if (c < allCourses.Count - 1) cc.Margin = new Thickness(0, 0, 5, 0);
+                cc.Cursor = Cursors.Hand;
+                cc.ToolTip = "원탭 자동 코스 시작: " + rc.Badge;
+
+                StackPanel sp = new StackPanel();
+                sp.Children.Add(new TextBlock
+                {
+                    Text = "원탭 코스 · " + rc.Title,
+                    FontSize = 10.2,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = ThemePalette.BrAmber,
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                });
+                sp.Children.Add(new TextBlock
+                {
+                    Text = rc.Badge,
+                    FontFamily = ThemePalette.FontMono,
+                    FontSize = 8.8,
+                    Foreground = ThemePalette.BrTextSecondary,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Margin = new Thickness(0, 1, 0, 0)
+                });
+                cc.Child = sp;
+                cc.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
+                {
+                    e.Handled = true;
+                    mCtrl.StartRoutine(capId);
+                    SelectTab(capTab, true, false);
+                };
+                Grid.SetColumn(cc, c);
+                mCourseGrid.Children.Add(cc);
+                mCourseCards.Add(cc);
+                mCourseIds.Add(rc.Id);
+            }
+            Grid.SetRow(mCourseGrid, 2);
+            panel.Children.Add(mCourseGrid);
+
+            // Row 3: Responsive Stage-Ordered Preset Sections List
             mPresetScroll = new ScrollViewer();
             mPresetScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             mPresetScroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
             mPresetScroll.Resources.Add(typeof(ScrollBar), ThemePalette.CreateDarkScrollBarStyle());
 
-            mPresetGrid = new UniformGrid();
-            mPresetGrid.Columns = 1;
-            mPresetGrid.VerticalAlignment = VerticalAlignment.Top;
-            mPresetGrid.Margin = new Thickness(0, 0, 6, 0);
-            mPresetScroll.Content = mPresetGrid;
+            mPresetSectionsPanel = new StackPanel();
+            mPresetSectionsPanel.Margin = new Thickness(0, 0, 6, 0);
+            mPresetScroll.Content = mPresetSectionsPanel;
 
-            Grid.SetRow(mPresetScroll, 2);
+            Grid.SetRow(mPresetScroll, 3);
             panel.Children.Add(mPresetScroll);
             return panel;
         }
@@ -2978,6 +3681,7 @@ namespace VortaAegisPC
             RefreshPackFilterChipStyle();
             RefreshVolumeControls();
             RefreshProfileControls();
+            RefreshAmbientControls();
             RefreshSleepTimerUi();
             RefreshFavoritesUi();
             RefreshSessionDock();
@@ -3050,16 +3754,16 @@ namespace VortaAegisPC
 
             if (matched != null)
             {
-                string shortPack = matched.IsCore ? "코어" : "PC Pro";
-                if (!matched.IsCore && matched.PackId != "vorta-pc-pro-v1")
+                string shortPack = matched.IsCore ? "코어" : (matched.PackId == "vorta-journey-v1" ? "여정" : "PC Pro");
+                if (!matched.IsCore && matched.PackId != "vorta-pc-pro-v1" && matched.PackId != "vorta-journey-v1")
                 {
                     shortPack = matched.PackName;
                     if (shortPack.Length > 10) shortPack = shortPack.Substring(0, 10);
                 }
                 mTxtPackFilter.Text = string.Format(CultureInfo.InvariantCulture, "{0} {1}", shortPack, matched.PresetCount);
-                mPackFilterBtn.Background = matched.IsCore ? ThemePalette.BrAmberBg : ThemePalette.BrCyanBg;
-                mPackFilterBtn.BorderBrush = matched.IsCore ? ThemePalette.BrAmber : ThemePalette.BrCyan;
-                mTxtPackFilter.Foreground = matched.IsCore ? ThemePalette.BrAmber : ThemePalette.BrCyan;
+                mPackFilterBtn.Background = matched.IsCore ? ThemePalette.BrAmberBg : (matched.PackId == "vorta-journey-v1" ? ThemePalette.BrActiveBg : ThemePalette.BrCyanBg);
+                mPackFilterBtn.BorderBrush = matched.IsCore ? ThemePalette.BrAmber : (matched.PackId == "vorta-journey-v1" ? ThemePalette.BrActive : ThemePalette.BrCyan);
+                mTxtPackFilter.Foreground = matched.IsCore ? ThemePalette.BrAmber : (matched.PackId == "vorta-journey-v1" ? ThemePalette.BrActive : ThemePalette.BrCyan);
             }
             else
             {
@@ -3067,6 +3771,77 @@ namespace VortaAegisPC
                 mPackFilterBtn.Background = ThemePalette.BrSurface;
                 mPackFilterBtn.BorderBrush = ThemePalette.BrOutline;
                 mTxtPackFilter.Foreground = ThemePalette.BrTextSecondary;
+            }
+        }
+
+        public void RefreshAmbientControls()
+        {
+            if (mAmbientChips.Count == 0 || mSeekAmbientMix == null) return;
+            int ambType = mCtrl.Dsp.AmbientType;
+            int ambMix = mCtrl.Dsp.AmbientMixPercent;
+            PresetItem cur = mCtrl.Dsp.CurrentPreset;
+            bool isUltra = (mCtrl.Dsp.IsPlaying && cur != null && cur.NoiseType == 2);
+
+            for (int i = 0; i < mAmbientChips.Count; i++)
+            {
+                bool sel = (i == ambType);
+                mAmbientChips[i].Background = sel ? ThemePalette.BrCyanBg : ThemePalette.BrSurfaceHigh;
+                mAmbientChips[i].BorderBrush = sel ? ThemePalette.BrCyan : ThemePalette.BrOutline;
+                mAmbientLabels[i].Foreground = sel ? ThemePalette.BrCyan : ThemePalette.BrTextSecondary;
+            }
+            mSuppressAmbientCallback = true;
+            mSeekAmbientMix.Value = ambMix;
+            mSuppressAmbientCallback = false;
+            mSeekAmbientMix.IsEnabled = (ambType != AegisDspEngine.AMBIENT_OFF && !isUltra);
+            if (isUltra && ambType != AegisDspEngine.AMBIENT_OFF)
+            {
+                mTxtAmbientMix.Text = "대기";
+                mTxtAmbientMix.Foreground = ThemePalette.BrTextTertiary;
+            }
+            else if (ambType == AegisDspEngine.AMBIENT_OFF)
+            {
+                mTxtAmbientMix.Text = "꺼짐";
+                mTxtAmbientMix.Foreground = ThemePalette.BrTextTertiary;
+            }
+            else
+            {
+                mTxtAmbientMix.Text = string.Format(CultureInfo.InvariantCulture, "{0}%", ambMix);
+                mTxtAmbientMix.Foreground = ThemePalette.BrCyan;
+            }
+        }
+
+        public void RefreshRoutineBannerUi()
+        {
+            if (mRoutineBanner == null || mTxtRoutineBanner == null) return;
+            string rId = mCtrl.ActiveRoutineId;
+            if (string.IsNullOrEmpty(rId) || !mCtrl.Dsp.IsPlaying)
+            {
+                mRoutineBanner.Visibility = Visibility.Collapsed;
+                RefreshCourseStripStyles();
+                return;
+            }
+            mRoutineBanner.Visibility = Visibility.Visible;
+            int stepIdx = mCtrl.ActiveRoutineStepIndex;
+            int stepCount = Math.Max(1, mCtrl.ActiveRoutineStepCount);
+            int remSec = Math.Max(0, mCtrl.RoutineStepRemainingSeconds);
+            mTxtRoutineBanner.Text = string.Format(CultureInfo.InvariantCulture,
+                "코스 {0}/{1} · {2} · {3} ({4:D2}:{5:D2})",
+                stepIdx + 1, stepCount, mCtrl.ActiveRoutineTitle, mCtrl.ActiveRoutineStepLabel, remSec / 60, remSec % 60);
+            mTxtRoutineNext.Text = (stepIdx >= stepCount - 1) ? "코스 종료" : "다음 단계";
+            RefreshCourseStripStyles();
+        }
+
+        private void RefreshCourseStripStyles()
+        {
+            if (mCourseGrid == null) return;
+            bool searchHidden = !string.IsNullOrEmpty(mSearchQuery);
+            mCourseGrid.Visibility = searchHidden ? Visibility.Collapsed : Visibility.Visible;
+            string activeId = (mCtrl.Dsp.IsPlaying ? mCtrl.ActiveRoutineId : "");
+            for (int i = 0; i < mCourseCards.Count && i < mCourseIds.Count; i++)
+            {
+                bool active = !string.IsNullOrEmpty(activeId) && string.Equals(activeId, mCourseIds[i], StringComparison.Ordinal);
+                mCourseCards[i].Background = active ? ThemePalette.BrActiveBg : ThemePalette.BrSurface;
+                mCourseCards[i].BorderBrush = active ? ThemePalette.BrActive : ThemePalette.BrOutline;
             }
         }
 
@@ -3312,9 +4087,18 @@ namespace VortaAegisPC
         public void RefreshSessionDock()
         {
             if (mQuickDockGrid == null) return;
+            if (mTxtQuickDockSubtitle != null)
+            {
+                mTxtQuickDockSubtitle.Text = PresetAdvisor.GetTimeWindowLabel(DateTime.Now.Hour);
+            }
             mQuickDockGrid.Children.Clear();
 
             List<int> picks = new List<int>();
+            int[] tod = PresetAdvisor.GetTimeOfDayRecommendations(DateTime.Now.Hour);
+            for (int i = 0; i < tod.Length && picks.Count < 3; i++)
+            {
+                if (!picks.Contains(tod[i])) picks.Add(tod[i]);
+            }
             if (mCtrl.State.FavoriteIds != null)
             {
                 for (int i = 0; i < mCtrl.State.FavoriteIds.Count && picks.Count < 6; i++)
@@ -3475,6 +4259,7 @@ namespace VortaAegisPC
         public void RefreshDashboard(bool allowEntryTabSync)
         {
             bool running = mCtrl.Dsp.IsPlaying;
+            bool gentleFading = mCtrl.Dsp.IsGentleFadingOut;
             PresetItem p = running ? mCtrl.Dsp.CurrentPreset : null;
             mLastRunning = running && p != null;
 
@@ -3493,7 +4278,12 @@ namespace VortaAegisPC
                 mTxtNowEyebrow.Text = p.ShortCode + " · " + p.Badge;
                 if (!p.IsCore)
                 {
-                    mTxtNowPackPill.Text = "PC Pro 팩";
+                    bool isJ = string.Equals(p.PackId, "vorta-journey-v1", StringComparison.OrdinalIgnoreCase);
+                    bool isPro = string.Equals(p.PackId, "vorta-pc-pro-v1", StringComparison.OrdinalIgnoreCase);
+                    mTxtNowPackPill.Text = isJ ? "여정 팩" : (isPro ? "PC Pro 팩" : (p.PackName ?? "확장 팩"));
+                    mNowPackPill.Background = isJ ? ThemePalette.BrActiveBg : ThemePalette.BrCyanBg;
+                    mNowPackPill.BorderBrush = isJ ? ThemePalette.BrActive : ThemePalette.BrCyan;
+                    mTxtNowPackPill.Foreground = isJ ? ThemePalette.BrActive : ThemePalette.BrCyan;
                     mNowPackPill.Visibility = Visibility.Visible;
                 }
                 else
@@ -3520,15 +4310,15 @@ namespace VortaAegisPC
             else
             {
                 mScopeTimer.Stop();
-                mAccentBar.Background = ThemePalette.BrOutline;
-                mStatusLed.Fill = ThemePalette.BrTextTertiary;
-                mTxtStatus.Text = "대기 중";
-                mTxtStatus.Foreground = ThemePalette.BrTextSecondary;
+                mAccentBar.Background = gentleFading ? ThemePalette.BrAmber : ThemePalette.BrOutline;
+                mStatusLed.Fill = gentleFading ? ThemePalette.BrAmber : ThemePalette.BrTextTertiary;
+                mTxtStatus.Text = gentleFading ? "20초 페이드아웃 중..." : "대기 중";
+                mTxtStatus.Foreground = gentleFading ? ThemePalette.BrAmber : ThemePalette.BrTextSecondary;
 
                 UpdateHeroViews(0f, null, false);
-                mTxtNowEyebrow.Text = "STANDBY · WASAPI 48kHz";
+                mTxtNowEyebrow.Text = gentleFading ? "GENTLE SLEEP FADE-OUT" : "STANDBY · WASAPI 48kHz";
                 mNowPackPill.Visibility = Visibility.Collapsed;
-                mTxtScenarioTitle.Text = "프리셋을 선택하면 즉시 재생됩니다";
+                mTxtScenarioTitle.Text = gentleFading ? "부드럽게 음량을 낮추어 종료하고 있습니다" : "프리셋을 선택하면 즉시 재생됩니다";
                 UpdateMechanismStructured(null);
                 UpdateTelemetryStrip(null, false);
                 UpdateSweepBar(null, false);
@@ -3548,6 +4338,8 @@ namespace VortaAegisPC
             mScope.UpdateFrame(mCtrl.Dsp);
             RefreshSessionMonitorCells();
             RefreshSessionDock();
+            RefreshAmbientControls();
+            RefreshRoutineBannerUi();
 
             int targetTab = TabSyncPolicy.ResolveTabOnEntry(
                 mLastRunning,
@@ -3601,7 +4393,12 @@ namespace VortaAegisPC
             mTxtHeroFreq.Foreground = ThemePalette.BrAmber;
 
             string badge = "";
-            if (p.BinauralBeat > 0f) badge = string.Format(CultureInfo.InvariantCulture, "L/R 차 {0:F2} Hz", p.BinauralBeat);
+            if (p.IsBinauralRamp)
+            {
+                float beat = mCtrl.Dsp.LiveBeatHz > 0f ? mCtrl.Dsp.LiveBeatHz : p.SweepStart;
+                badge = string.Format(CultureInfo.InvariantCulture, "L/R 차 {0:F1} Hz (램프)", beat);
+            }
+            else if (p.BinauralBeat > 0f) badge = string.Format(CultureInfo.InvariantCulture, "L/R 차 {0:F2} Hz", p.BinauralBeat);
             else if (p.IsSweep) badge = "왕복 스윕";
             else if (p.Freq2 > 0f) badge = string.Format(CultureInfo.InvariantCulture, "+ {0:F2} Hz", p.Freq2);
             else if (p.FmMod) badge = "FM 변조";
@@ -3623,7 +4420,7 @@ namespace VortaAegisPC
             if (p == null)
             {
                 mTxtActionDetail.Text = "64-bit 위상 연속 정현파 + -0.5 dBTP 무왜곡 헤드룸 대기";
-                mTxtUsageDetail.Text = "유튜브·작업·AI 툴과 간섭 없이 트레이 백그라운드 동시 재생";
+                mTxtUsageDetail.Text = "다른 오디오·작업 앱과 간섭 없이 백그라운드 동시 재생";
                 mPcCompRow.Visibility = Visibility.Collapsed;
                 return;
             }
@@ -3642,13 +4439,17 @@ namespace VortaAegisPC
             mTxtUsageDetail.Text = cleaned.Count > 1 ? cleaned[1] : (TabSyncPolicy.TAB_SHORT_NAMES[p.TabIndex] + " 권장 시나리오");
 
             string compNote = null;
-            if (mCtrl.Dsp.IsUltrasonicGuarded)
+            if (!string.IsNullOrEmpty(mCtrl.LastSoftenNotice))
+            {
+                compNote = mCtrl.LastSoftenNotice;
+            }
+            else if (mCtrl.Dsp.IsUltrasonicGuarded)
             {
                 compNote = "고주파 이어폰·스피커 보호용 -12 dB 안전 감쇄 적용 중";
             }
             else if (mCtrl.Dsp.IsPcCompensationActive)
             {
-                double baseF = p.IsSweep ? p.SweepStart : p.Freq1;
+                double baseF = p.IsBinauralRamp ? p.Freq1 : (p.IsSweep ? p.SweepStart : p.Freq1);
                 if (mCtrl.Dsp.OutputProfile == PcOutputProfile.PcSpeaker && baseF > 0 && baseF < 32.0)
                 {
                     compNote = "소형 PC 스피커용 144 Hz 반송파 + 기본음 동시 출력 (파형 버튼으로 비교)";
@@ -3705,6 +4506,11 @@ namespace VortaAegisPC
             {
                 mTelPhase.Text = "180° 역위상";
                 mTelPhase.Foreground = ThemePalette.BrAmber;
+            }
+            else if (p.IsBinauralRamp)
+            {
+                mTelPhase.Text = "바이노럴 램프";
+                mTelPhase.Foreground = ThemePalette.BrActive;
             }
             else if (p.BinauralBeat > 0f)
             {
@@ -3831,7 +4637,9 @@ namespace VortaAegisPC
             }
             mSweepPanel.Visibility = Visibility.Visible;
             mTxtSweepLeft.Text = string.Format(CultureInfo.InvariantCulture, "{0:F1} Hz", p.SweepStart);
-            mTxtSweepRight.Text = string.Format(CultureInfo.InvariantCulture, "{0:F1} Hz", p.SweepEnd);
+            mTxtSweepRight.Text = (p.IsBinauralRamp && mCtrl.Dsp.SweepProgress >= 0.999f)
+                ? string.Format(CultureInfo.InvariantCulture, "{0:F1} Hz (유지 중)", p.SweepEnd)
+                : string.Format(CultureInfo.InvariantCulture, "{0:F1} Hz", p.SweepEnd);
             double trackW = mSweepTrack.ActualWidth;
             if (trackW > 4)
             {
@@ -3975,68 +4783,190 @@ namespace VortaAegisPC
 
         private void RenderPresetCards()
         {
-            if (mPresetGrid == null) return;
-            mPresetGrid.Children.Clear();
+            if (mPresetSectionsPanel == null) return;
+            mPresetSectionsPanel.Children.Clear();
             mActiveCardBorder = null;
             int activeId = (mCtrl.Dsp.IsPlaying && mCtrl.Dsp.CurrentPreset != null) ? mCtrl.Dsp.CurrentPreset.Id : -1;
             mLastHighlightedPresetId = activeId;
 
-            string q = mSearchQuery.ToLowerInvariant();
-            bool hasQuery = !string.IsNullOrEmpty(q);
+            RefreshCourseStripStyles();
+
+            bool hasQuery = !string.IsNullOrEmpty(mSearchQuery);
             int cols = mPresetCols > 0 ? mPresetCols : 1;
+            bool stageGroupedMode = !hasQuery && !mFavoritesOnly && !IsNonCorePackFilterActive();
+            int totalRendered = 0;
 
-            for (int i = 0; i < mCtrl.Presets.Count; i++)
+            if (stageGroupedMode)
             {
-                PresetItem preset = mCtrl.Presets[i];
-                if (!MatchesPackFilter(preset))
+                Dictionary<int, PresetItem> byId = new Dictionary<int, PresetItem>();
+                for (int i = 0; i < mCtrl.Presets.Count; i++)
                 {
-                    continue;
-                }
-                if (mFavoritesOnly && !mCtrl.IsFavorite(preset.Id))
-                {
-                    continue;
-                }
-                if (hasQuery)
-                {
-                    bool hit = (preset.Title != null && preset.Title.ToLowerInvariant().Contains(q))
-                        || (preset.Badge != null && preset.Badge.ToLowerInvariant().Contains(q))
-                        || (preset.Desc != null && preset.Desc.ToLowerInvariant().Contains(q))
-                        || (preset.ShortCode != null && preset.ShortCode.ToLowerInvariant().Contains(q))
-                        || (preset.PackName != null && preset.PackName.ToLowerInvariant().Contains(q))
-                        || TabSyncPolicy.TAB_SHORT_NAMES[preset.TabIndex].Contains(mSearchQuery);
-                    if (!hit) continue;
-                }
-                else if (!mFavoritesOnly && !IsNonCorePackFilterActive() && preset.TabIndex != mSelectedTab)
-                {
-                    continue;
+                    PresetItem it = mCtrl.Presets[i];
+                    if (it.TabIndex == mSelectedTab && MatchesPackFilter(it))
+                    {
+                        byId[it.Id] = it;
+                    }
                 }
 
-                Border card = BuildPresetCard(preset, preset.Id == activeId, cols);
-                if (preset.Id == activeId) mActiveCardBorder = card;
-                mPresetGrid.Children.Add(card);
+                StageGroup[] stages = JourneyOrderPolicy.GetStagesForTab(mSelectedTab);
+                HashSet<int> usedInStages = new HashSet<int>();
+                for (int s = 0; s < stages.Length; s++)
+                {
+                    StageGroup sg = stages[s];
+                    List<PresetItem> stageItems = new List<PresetItem>();
+                    for (int k = 0; k < sg.PresetIds.Length; k++)
+                    {
+                        PresetItem pm;
+                        if (byId.TryGetValue(sg.PresetIds[k], out pm))
+                        {
+                            stageItems.Add(pm);
+                            usedInStages.Add(pm.Id);
+                        }
+                    }
+                    if (stageItems.Count == 0) continue;
+
+                    mPresetSectionsPanel.Children.Add(BuildStageHeader(sg.Title, sg.Subtitle, stageItems.Count));
+                    UniformGrid ugrid = new UniformGrid();
+                    ugrid.Columns = cols;
+                    ugrid.VerticalAlignment = VerticalAlignment.Top;
+                    for (int k = 0; k < stageItems.Count; k++)
+                    {
+                        PresetItem preset = stageItems[k];
+                        Border card = BuildPresetCard(preset, preset.Id == activeId, cols);
+                        if (preset.Id == activeId) mActiveCardBorder = card;
+                        ugrid.Children.Add(card);
+                        totalRendered++;
+                    }
+                    mPresetSectionsPanel.Children.Add(ugrid);
+                }
+
+                List<PresetItem> extras = new List<PresetItem>();
+                for (int i = 0; i < mCtrl.Presets.Count; i++)
+                {
+                    PresetItem it = mCtrl.Presets[i];
+                    if (it.TabIndex == mSelectedTab && MatchesPackFilter(it) && !usedInStages.Contains(it.Id))
+                    {
+                        extras.Add(it);
+                    }
+                }
+                if (extras.Count > 0)
+                {
+                    mPresetSectionsPanel.Children.Add(BuildStageHeader("외부 확장 팩", "사용자 추가 시나리오", extras.Count));
+                    UniformGrid extGrid = new UniformGrid();
+                    extGrid.Columns = cols;
+                    extGrid.VerticalAlignment = VerticalAlignment.Top;
+                    for (int k = 0; k < extras.Count; k++)
+                    {
+                        PresetItem preset = extras[k];
+                        Border card = BuildPresetCard(preset, preset.Id == activeId, cols);
+                        if (preset.Id == activeId) mActiveCardBorder = card;
+                        extGrid.Children.Add(card);
+                        totalRendered++;
+                    }
+                    mPresetSectionsPanel.Children.Add(extGrid);
+                }
+            }
+            else
+            {
+                List<PresetItem> filtered = new List<PresetItem>();
+                for (int i = 0; i < mCtrl.Presets.Count; i++)
+                {
+                    PresetItem preset = mCtrl.Presets[i];
+                    if (!MatchesPackFilter(preset)) continue;
+                    if (mFavoritesOnly && !mCtrl.IsFavorite(preset.Id)) continue;
+                    if (hasQuery && !PresetAdvisor.MatchesQuery(preset, TabSyncPolicy.TAB_SHORT_NAMES[preset.TabIndex], mSearchQuery)) continue;
+                    filtered.Add(preset);
+                }
+                filtered.Sort(delegate(PresetItem a, PresetItem b)
+                {
+                    int ra = JourneyOrderPolicy.GetGlobalOrderRank(a.Id);
+                    int rb = JourneyOrderPolicy.GetGlobalOrderRank(b.Id);
+                    return ra.CompareTo(rb);
+                });
+
+                UniformGrid ugrid = new UniformGrid();
+                ugrid.Columns = cols;
+                ugrid.VerticalAlignment = VerticalAlignment.Top;
+                for (int i = 0; i < filtered.Count; i++)
+                {
+                    PresetItem preset = filtered[i];
+                    Border card = BuildPresetCard(preset, preset.Id == activeId, cols);
+                    if (preset.Id == activeId) mActiveCardBorder = card;
+                    ugrid.Children.Add(card);
+                    totalRendered++;
+                }
+                mPresetSectionsPanel.Children.Add(ugrid);
             }
 
             if (mTxtMatchCount != null)
             {
-                mTxtMatchCount.Text = string.Format(CultureInfo.InvariantCulture, "{0}종", mPresetGrid.Children.Count);
+                mTxtMatchCount.Text = string.Format(CultureInfo.InvariantCulture, "{0}종", totalRendered);
             }
 
-            if (mPresetGrid.Children.Count == 0)
+            if (totalRendered == 0)
             {
                 Border emptyWrap = new Border();
                 emptyWrap.Padding = new Thickness(12, 24, 12, 24);
                 TextBlock empty = new TextBlock();
                 empty.Text = mFavoritesOnly
                     ? "즐겨찾기에 추가된 프리셋이 없습니다. 카드 우측 상단 별 아이콘을 눌러 추가하세요."
-                    : "현재 필터에 해당하는 프리셋이 없습니다.";
+                    : "현재 필터에 해당하는 프리셋이 없습니다. 예: 포모도로, 잠, 헬스, 40Hz";
                 empty.Foreground = ThemePalette.BrTextTertiary;
                 empty.FontSize = 11.5;
                 empty.TextWrapping = TextWrapping.Wrap;
                 empty.TextAlignment = TextAlignment.Center;
                 empty.HorizontalAlignment = HorizontalAlignment.Center;
                 emptyWrap.Child = empty;
-                mPresetGrid.Children.Add(emptyWrap);
+                mPresetSectionsPanel.Children.Add(emptyWrap);
             }
+        }
+
+        private static Border BuildStageHeader(string title, string subtitle, int count)
+        {
+            Border wrap = new Border();
+            wrap.Margin = new Thickness(0, 6, 4, 6);
+            wrap.Padding = new Thickness(8, 4, 8, 4);
+            wrap.Background = ThemePalette.BrSurface;
+            wrap.BorderBrush = ThemePalette.BrAmber;
+            wrap.BorderThickness = new Thickness(2.5, 0, 0, 0);
+            wrap.CornerRadius = new CornerRadius(3);
+
+            Grid g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            StackPanel left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            left.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontSize = 11.2,
+                FontWeight = FontWeights.Bold,
+                Foreground = ThemePalette.BrAmber,
+                Margin = new Thickness(0, 0, 8, 0)
+            });
+            left.Children.Add(new TextBlock
+            {
+                Text = subtitle,
+                FontSize = 10,
+                Foreground = ThemePalette.BrTextTertiary,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            g.Children.Add(left);
+
+            TextBlock cnt = new TextBlock
+            {
+                Text = string.Format(CultureInfo.InvariantCulture, "{0}종", count),
+                FontFamily = ThemePalette.FontMono,
+                FontSize = 9.5,
+                Foreground = ThemePalette.BrTextSecondary,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(cnt, 1);
+            g.Children.Add(cnt);
+
+            wrap.Child = g;
+            return wrap;
         }
 
         private Border BuildPresetCard(PresetItem preset, bool isActive, int cols)
@@ -4074,19 +5004,21 @@ namespace VortaAegisPC
 
             if (!preset.IsCore)
             {
+                bool isJourney = string.Equals(preset.PackId, "vorta-journey-v1", StringComparison.OrdinalIgnoreCase);
+                bool isPro = string.Equals(preset.PackId, "vorta-pc-pro-v1", StringComparison.OrdinalIgnoreCase);
                 Border packTag = new Border();
-                packTag.Background = ThemePalette.BrCyanBg;
-                packTag.BorderBrush = ThemePalette.BrCyan;
+                packTag.Background = isJourney ? ThemePalette.BrActiveBg : ThemePalette.BrCyanBg;
+                packTag.BorderBrush = isJourney ? ThemePalette.BrActive : ThemePalette.BrCyan;
                 packTag.BorderThickness = new Thickness(1);
                 packTag.CornerRadius = new CornerRadius(4);
                 packTag.Padding = new Thickness(5, 0.5, 5, 0.5);
                 packTag.Margin = new Thickness(4, 0, 5, 0);
                 packTag.Child = new TextBlock
                 {
-                    Text = "PC Pro",
+                    Text = isJourney ? "여정" : (isPro ? "PC Pro" : "확장"),
                     FontSize = 9,
                     FontWeight = FontWeights.Bold,
-                    Foreground = ThemePalette.BrCyan
+                    Foreground = isJourney ? ThemePalette.BrActive : ThemePalette.BrCyan
                 };
                 rightMeta.Children.Add(packTag);
             }
@@ -4161,6 +5093,38 @@ namespace VortaAegisPC
             desc.TextWrapping = TextWrapping.Wrap;
             desc.LineHeight = 16;
             col.Children.Add(desc);
+
+            Grid footRow = new Grid();
+            footRow.Margin = new Thickness(0, 7, 0, 0);
+            footRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            footRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            TextBlock guide = new TextBlock();
+            guide.Text = PresetAdvisor.GetListeningGuideBadge(preset);
+            guide.FontFamily = ThemePalette.FontMono;
+            guide.FontSize = 9.5;
+            guide.Foreground = preset.NoiseType == 2 ? ThemePalette.BrAmber : ThemePalette.BrTextTertiary;
+            guide.VerticalAlignment = VerticalAlignment.Center;
+            guide.TextTrimming = TextTrimming.CharacterEllipsis;
+            guide.Margin = new Thickness(0, 0, 6, 0);
+            footRow.Children.Add(guide);
+
+            TextBlock explainTxt;
+            Border explainBtn = CreatePillChipWithLabel("설명", out explainTxt, delegate
+            {
+                mCtrl.ShowPresetDetailDialog(preset);
+            });
+            explainBtn.Height = 20;
+            explainBtn.Padding = new Thickness(8, 0, 8, 0);
+            explainBtn.Background = ThemePalette.BrAmberBg;
+            explainBtn.BorderBrush = ThemePalette.BrAmber;
+            explainTxt.FontSize = 9.5;
+            explainTxt.Foreground = ThemePalette.BrAmber;
+            explainBtn.ToolTip = "이 시나리오가 무엇인지 쉬운 설명 보기";
+            explainBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; };
+            Grid.SetColumn(explainBtn, 1);
+            footRow.Children.Add(explainBtn);
+            col.Children.Add(footRow);
 
             card.Child = col;
             card.MouseEnter += delegate
@@ -4742,7 +5706,16 @@ namespace VortaAegisPC
             bool playing = mCtrl.Dsp.IsPlaying;
             PresetItem p = playing ? mCtrl.Dsp.CurrentPreset : PresetCatalog.FindById(mCtrl.Presets, mCtrl.State.LastPresetId);
             mLed.Fill = playing ? ThemePalette.BrActive : ThemePalette.BrTextTertiary;
-            mTitle.Text = p != null ? p.Title : AppProductInfo.APP_NAME_KO;
+            string rId = playing ? mCtrl.ActiveRoutineId : "";
+            if (!string.IsNullOrEmpty(rId) && p != null)
+            {
+                mTitle.Text = string.Format(CultureInfo.InvariantCulture, "코스 {0}/{1} · {2}",
+                    mCtrl.ActiveRoutineStepIndex + 1, Math.Max(1, mCtrl.ActiveRoutineStepCount), p.Title);
+            }
+            else
+            {
+                mTitle.Text = p != null ? p.Title : AppProductInfo.APP_NAME_KO;
+            }
 
             string hz = playing
                 ? ((p != null && !p.IsSweep && p.Freq1 <= 0f)
@@ -4754,7 +5727,7 @@ namespace VortaAegisPC
                 : (mCtrl.Dsp.VolumePercent > VolumeCurve.UNITY_PERCENT
                     ? string.Format(CultureInfo.InvariantCulture, "{0}% 증폭", mCtrl.Dsp.VolumePercent)
                     : string.Format(CultureInfo.InvariantCulture, "{0}%", mCtrl.Dsp.VolumePercent));
-            int rem = mCtrl.SleepTimerRemainingSeconds;
+            int rem = !string.IsNullOrEmpty(rId) ? mCtrl.RoutineStepRemainingSeconds : mCtrl.SleepTimerRemainingSeconds;
             mFreqVol.Text = rem > 0
                 ? string.Format(CultureInfo.InvariantCulture, "{0} · {1} · {2:D2}:{3:D2}", hz, vol, rem / 60, rem % 60)
                 : (hz + " · " + vol);

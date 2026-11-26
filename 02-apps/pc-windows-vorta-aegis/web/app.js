@@ -9,7 +9,7 @@ import {
 const DETENT_VALUES = [20, 45, 75, 100];
 const DETENT_LABELS = ["20% 배경", "45% 병행", "75% 단독", "100% 최대"];
 const DEFAULT_MECHANISM =
-    "• 위상 연속 정현파 무왜곡 출력 대기\n• 유튜브·스포티파이·멜론 등 음악 앱과 끊김 없이 동시 재생됩니다";
+    "• 위상 연속 정현파 무왜곡 출력 대기\n• 다른 오디오·작업 앱과 간섭 없이 동시 재생됩니다";
 
 const state = {
     presets: [],

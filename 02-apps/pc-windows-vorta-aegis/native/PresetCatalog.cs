@@ -44,6 +44,8 @@ namespace VortaAegisPC
         public string PackVersion = "2.3.0";
         public bool IsCore = true;
 
+        public bool IsBinauralRamp { get { return IsSweep && Freq1 > 0f; } }
+
         public string BuildSpecLine()
         {
             StringBuilder sb = new StringBuilder();
@@ -61,6 +63,14 @@ namespace VortaAegisPC
                 {
                     sb.Append("스테레오 노이즈 마스킹");
                 }
+            }
+            else if (IsBinauralRamp)
+            {
+                string durText = SweepDurationSec >= 60.0f
+                    ? string.Format(CultureInfo.InvariantCulture, "{0:F0}분 전환 후 유지", Math.Max(1.0f, (float)Math.Round(SweepDurationSec / 60.0f)))
+                    : string.Format(CultureInfo.InvariantCulture, "{0:F0}s 전환 후 유지", Math.Max(1.0f, SweepDurationSec));
+                sb.Append(string.Format(CultureInfo.InvariantCulture,
+                    "바이노럴 램프 {0:F0} Hz · {1:F1}→{2:F1} Hz ({3})", Freq1, SweepStart, SweepEnd, durText));
             }
             else if (IsSweep)
             {

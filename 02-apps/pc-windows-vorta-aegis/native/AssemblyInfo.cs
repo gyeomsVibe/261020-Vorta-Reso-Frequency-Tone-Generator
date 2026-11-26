@@ -10,5 +10,5 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyTrademark("Vorta Aegis / 보르타 이지스")]
 [assembly: AssemblyCulture("")]
 [assembly: ComVisible(false)]
-[assembly: AssemblyVersion("3.2.0.0")]
-[assembly: AssemblyFileVersion("3.2.0.0")]
+[assembly: AssemblyVersion("3.4.0.0")]
+[assembly: AssemblyFileVersion("3.4.0.0")]

@@ -19,7 +19,7 @@ namespace VortaAegisPC
         private const string MUTEX_NAME = "Local\\VortaAegisProPC_v3_Mutex";
         private const string PIPE_NAME = "VortaAegisProPC_v3_Pipe";
 
-        private static readonly int[] QUICK_PRESET_IDS = new int[] { 1, 2, 101, 19, 102, 13, 25, 45 };
+        private static readonly int[] QUICK_PRESET_IDS = new int[] { 201, 35, 205, 102, 101, 208, 107, 1 };
 
         private readonly string mBaseDir;
         private IList<PresetItem> mPresets;
@@ -34,6 +34,8 @@ namespace VortaAegisPC
         private CompanionWindow mMainWin;
         private MiniBarWindow mMiniWin;
         private AboutLicenseWindow mAboutWin;
+        private BeginnerGuideWindow mGuideWin;
+        private PresetDetailWindow mDetailWin;
         private Forms.NotifyIcon mTrayIcon;
         private Forms.ContextMenuStrip mTrayMenu;
         private Forms.ToolStripMenuItem mMenuStatusItem;
@@ -43,6 +45,11 @@ namespace VortaAegisPC
         private System.Windows.Threading.DispatcherTimer mSleepTimer;
         private int mSleepRemainingSec;
         private int mSleepPresetMin;
+        private System.Windows.Threading.DispatcherTimer mRoutineTimer;
+        private RoutineCourse mActiveRoutine;
+        private int mRoutineStepIndex;
+        private int mRoutineStepRemainingSec;
+        private string mLastSoftenNotice = "";
         private DateTime mPlaybackStartedUtc = DateTime.MinValue;
         private string mCachedEndpointName = "시스템 기본 출력";
 
@@ -56,6 +63,34 @@ namespace VortaAegisPC
         public bool AllowExit { get { return mAllowExit; } }
         public int SleepTimerRemainingSeconds { get { return mSleepRemainingSec; } }
         public int SleepTimerPresetMinutes { get { return mSleepPresetMin; } }
+        public string ActiveRoutineId { get { return mActiveRoutine != null ? mActiveRoutine.Id : ""; } }
+        public string ActiveRoutineTitle { get { return mActiveRoutine != null ? mActiveRoutine.Title : ""; } }
+        public int ActiveRoutineStepIndex { get { return mActiveRoutine != null ? mRoutineStepIndex : 0; } }
+        public int ActiveRoutineStepCount { get { return mActiveRoutine != null ? mActiveRoutine.Steps.Length : 0; } }
+        public string ActiveRoutineStepLabel
+        {
+            get
+            {
+                if (mActiveRoutine == null || mActiveRoutine.Steps == null || mActiveRoutine.Steps.Length == 0) return "";
+                int idx = Math.Max(0, Math.Min(mActiveRoutine.Steps.Length - 1, mRoutineStepIndex));
+                return mActiveRoutine.Steps[idx].StageLabel;
+            }
+        }
+        public int RoutineStepRemainingSeconds { get { return mActiveRoutine != null ? mRoutineStepRemainingSec : 0; } }
+        public int RoutineTotalRemainingSeconds
+        {
+            get
+            {
+                if (mActiveRoutine == null || mActiveRoutine.Steps == null) return 0;
+                int sum = mRoutineStepRemainingSec;
+                for (int i = mRoutineStepIndex + 1; i < mActiveRoutine.Steps.Length; i++)
+                {
+                    sum += mActiveRoutine.Steps[i].DurationMinutes * 60;
+                }
+                return sum;
+            }
+        }
+        public string LastSoftenNotice { get { return mLastSoftenNotice; } }
         public string ActiveEndpointDisplayName { get { return mCachedEndpointName; } }
 
         public long PlaybackElapsedSeconds
@@ -77,6 +112,7 @@ namespace VortaAegisPC
             mDsp.SetVolume(mState.VolumePercent, mState.IsMuted);
             mDsp.SetOutputProfile((PcOutputProfile)mState.OutputProfile);
             mDsp.SetUltrasonicGuardEnabled(mState.UltrasonicGuard);
+            mDsp.SetAmbientBed(mState.AmbientType, mState.AmbientMixPercent);
 
             mAudio = new WasapiAudioEngine(mDsp);
             mAudio.SetOutputDevice(mState.DeviceId);
@@ -135,6 +171,7 @@ namespace VortaAegisPC
             bool startMinimized = false;
             string captureLivePath = null;
             string captureAboutPath = null;
+            string captureRoutineId = null;
             int capW = 0;
             int capH = 0;
             int capPlayId = 0;
@@ -152,6 +189,11 @@ namespace VortaAegisPC
                     else if (string.Equals(args[i], "--capture-about", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                     {
                         captureAboutPath = args[i + 1];
+                        i++;
+                    }
+                    else if (string.Equals(args[i], "--capture-routine", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                    {
+                        captureRoutineId = args[i + 1];
                         i++;
                     }
                     else if (string.Equals(args[i], "--capture-size", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
@@ -195,6 +237,10 @@ namespace VortaAegisPC
                 if (!string.IsNullOrEmpty(captureAboutPath))
                 {
                     msg = "CAPTURE_ABOUT:" + captureAboutPath + "\n";
+                }
+                else if (!string.IsNullOrEmpty(captureLivePath) && !string.IsNullOrEmpty(captureRoutineId))
+                {
+                    msg = string.Format(CultureInfo.InvariantCulture, "CAPTURE_ROUTINE:{0}:{1}:{2}:{3}\n", capW, capH, captureRoutineId, captureLivePath);
                 }
                 else if (!string.IsNullOrEmpty(captureLivePath))
                 {
@@ -299,9 +345,19 @@ namespace VortaAegisPC
 
             mMenuStatusItem = new Forms.ToolStripMenuItem();
             mMenuStatusItem.Enabled = false;
-            mMenuStatusItem.Text = (playing && cur != null)
-                ? string.Format(CultureInfo.InvariantCulture, "재생 중 · {0} ({1:F1} Hz)", cur.Title, mDsp.LiveFreqHz > 0f ? mDsp.LiveFreqHz : cur.Freq1)
-                : string.Format(CultureInfo.InvariantCulture, "대기 중 · 볼륨 {0}%", mDsp.VolumePercent);
+            if (mActiveRoutine != null && playing && cur != null)
+            {
+                mMenuStatusItem.Text = string.Format(CultureInfo.InvariantCulture,
+                    "코스 {0}/{1} · {2} ({3:D2}:{4:D2})",
+                    mRoutineStepIndex + 1, mActiveRoutine.Steps.Length, mActiveRoutine.Title,
+                    mRoutineStepRemainingSec / 60, mRoutineStepRemainingSec % 60);
+            }
+            else
+            {
+                mMenuStatusItem.Text = (playing && cur != null)
+                    ? string.Format(CultureInfo.InvariantCulture, "재생 중 · {0} ({1:F1} Hz)", cur.Title, mDsp.LiveFreqHz > 0f ? mDsp.LiveFreqHz : cur.Freq1)
+                    : string.Format(CultureInfo.InvariantCulture, "대기 중 · 볼륨 {0}%", mDsp.VolumePercent);
+            }
             mTrayMenu.Items.Add(mMenuStatusItem);
 
             mTrayMenu.Items.Add(new Forms.ToolStripSeparator());
@@ -317,6 +373,26 @@ namespace VortaAegisPC
                 }
             };
             mTrayMenu.Items.Add(mMenuPlayStopItem);
+
+            Forms.ToolStripMenuItem courseMenu = new Forms.ToolStripMenuItem("원탭 자동 코스");
+            IList<RoutineCourse> allCourses = JourneyOrderPolicy.GetAllRoutines();
+            for (int c = 0; c < allCourses.Count; c++)
+            {
+                RoutineCourse rc = allCourses[c];
+                Forms.ToolStripMenuItem ci = new Forms.ToolStripMenuItem(rc.Title + " (" + rc.GetTotalMinutes() + "분)");
+                ci.Checked = (mActiveRoutine != null && string.Equals(mActiveRoutine.Id, rc.Id, StringComparison.Ordinal));
+                string capturedId = rc.Id;
+                ci.Click += delegate { StartRoutine(capturedId); };
+                courseMenu.DropDownItems.Add(ci);
+            }
+            if (mActiveRoutine != null)
+            {
+                courseMenu.DropDownItems.Add(new Forms.ToolStripSeparator());
+                Forms.ToolStripMenuItem nextCourseStep = new Forms.ToolStripMenuItem("현재 코스 다음 단계");
+                nextCourseStep.Click += delegate { AdvanceRoutineStep(); };
+                courseMenu.DropDownItems.Add(nextCourseStep);
+            }
+            mTrayMenu.Items.Add(courseMenu);
 
             Forms.ToolStripMenuItem showItem = new Forms.ToolStripMenuItem(IsAnyWindowVisible() ? "트레이로 숨기기" : "컨트롤 패널 열기");
             showItem.Click += delegate { ToggleVisibleFromTray(); };
@@ -462,6 +538,23 @@ namespace VortaAegisPC
                                     string outPath = cmd.Substring("CAPTURE_ABOUT:".Length).Trim();
                                     mWpfApp.Dispatcher.BeginInvoke(new Action(delegate { CaptureAboutBitmap(outPath); }));
                                 }
+                                else if (cmd.StartsWith("CAPTURE_ROUTINE:", StringComparison.Ordinal))
+                                {
+                                    string rest = cmd.Substring("CAPTURE_ROUTINE:".Length);
+                                    int c1 = rest.IndexOf(':');
+                                    int c2 = (c1 >= 0) ? rest.IndexOf(':', c1 + 1) : -1;
+                                    int c3 = (c2 >= 0) ? rest.IndexOf(':', c2 + 1) : -1;
+                                    if (c1 > 0 && c2 > c1 && c3 > c2)
+                                    {
+                                        int reqW;
+                                        int reqH;
+                                        int.TryParse(rest.Substring(0, c1), NumberStyles.Integer, CultureInfo.InvariantCulture, out reqW);
+                                        int.TryParse(rest.Substring(c1 + 1, c2 - c1 - 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out reqH);
+                                        string rId = rest.Substring(c2 + 1, c3 - c2 - 1);
+                                        string outPath = rest.Substring(c3 + 1).Trim();
+                                        mWpfApp.Dispatcher.BeginInvoke(new Action(delegate { CaptureRoutineBitmapEx(outPath, reqW, reqH, rId); }));
+                                    }
+                                }
                                 else if (cmd.StartsWith("CAPTURE_EX:", StringComparison.Ordinal))
                                 {
                                     string rest = cmd.Substring("CAPTURE_EX:".Length);
@@ -598,6 +691,57 @@ namespace VortaAegisPC
             }
         }
 
+        private void CaptureRoutineBitmapEx(string outPath, int reqW, int reqH, string routineId)
+        {
+            if (string.IsNullOrEmpty(outPath) || mMainWin == null) return;
+            try
+            {
+                mState.MiniMode = false;
+                ShowActiveWindow();
+                if (reqW > 0 && reqH > 0)
+                {
+                    mMainWin.WindowState = WindowState.Normal;
+                    mMainWin.Width = reqW;
+                    mMainWin.Height = reqH;
+                    Rect wa = SystemParameters.WorkArea;
+                    if (mMainWin.Left + reqW > wa.Right) mMainWin.Left = Math.Max(wa.Left, wa.Right - reqW - 12);
+                    if (mMainWin.Top + reqH > wa.Bottom) mMainWin.Top = Math.Max(wa.Top, wa.Bottom - reqH - 12);
+                    mMainWin.ApplyResponsiveLayoutNow();
+                }
+                mMainWin.UpdateLayout();
+
+                int savedLastId = mState.LastPresetId;
+                int savedLastTab = mState.LastTab;
+                StartRoutine(routineId);
+                mMainWin.JumpToPlayingPreset();
+
+                System.Windows.Threading.DispatcherTimer capTimer = new System.Windows.Threading.DispatcherTimer();
+                capTimer.Interval = TimeSpan.FromMilliseconds(1650);
+                capTimer.Tick += delegate
+                {
+                    capTimer.Stop();
+                    try
+                    {
+                        mMainWin.UpdateScopeVisualsNow();
+                        mMainWin.UpdateLayout();
+                        RenderAnyWindowToPng(mMainWin, outPath);
+                    }
+                    finally
+                    {
+                        StopPlayback();
+                        mState.LastPresetId = savedLastId;
+                        mState.LastTab = savedLastTab;
+                        AppStateStore.Save(mState);
+                        if (mMainWin.IsVisible) mMainWin.RefreshDashboard(true);
+                    }
+                };
+                capTimer.Start();
+            }
+            catch
+            {
+            }
+        }
+
         private static void RenderAnyWindowToPng(Window win, string outPath)
         {
             int w = Math.Max(1, (int)Math.Ceiling(win.ActualWidth));
@@ -681,7 +825,32 @@ namespace VortaAegisPC
 
         public void PlayPreset(PresetItem preset)
         {
+            ClearRoutineStateOnly();
+            PlayPresetInternal(preset, false);
+        }
+
+        private void PlayPresetInternal(PresetItem preset, bool isRoutineStep)
+        {
             if (preset == null) return;
+            PresetItem prev = mDsp.CurrentPreset;
+            mLastSoftenNotice = "";
+
+            string key = preset.Id.ToString(CultureInfo.InvariantCulture);
+            if (mState.RememberPerPresetVolume && mState.PerPresetVolumes != null && mState.PerPresetVolumes.ContainsKey(key))
+            {
+                int savedVol = VolumeCurve.ClampPercent(mState.PerPresetVolumes[key]);
+                mState.VolumePercent = savedVol;
+                mDsp.SetVolume(savedVol, mState.IsMuted);
+            }
+            else if (PresetAdvisor.ShouldWarnHighVolumeSwitch(prev, preset, mState.VolumePercent))
+            {
+                int recVol = PresetAdvisor.GetRecommendedVolumePercent(preset);
+                mState.VolumePercent = recVol;
+                mDsp.SetVolume(recVol, mState.IsMuted);
+                mLastSoftenNotice = string.Format(CultureInfo.InvariantCulture,
+                    "고볼륨 보호: 야간·휴식 프리셋 전환으로 안전 볼륨({0}%)으로 자동 조절됨", recVol);
+            }
+
             mPlaybackStartedUtc = DateTime.UtcNow;
             mState.LastTab = preset.TabIndex;
             mState.LastPresetId = preset.Id;
@@ -695,7 +864,11 @@ namespace VortaAegisPC
             AppStateStore.Save(mState);
             mAudio.PlayPreset(preset);
             UpdateTrayTooltip();
-            if (mMainWin != null && mMainWin.IsVisible) mMainWin.RefreshDashboard(false);
+            if (mMainWin != null && mMainWin.IsVisible)
+            {
+                mMainWin.RefreshVolumeControls();
+                mMainWin.RefreshDashboard(false);
+            }
             if (mMiniWin != null && mMiniWin.IsVisible) mMiniWin.SyncMini();
         }
 
@@ -703,18 +876,106 @@ namespace VortaAegisPC
         {
             if (mPresets == null || mPresets.Count == 0) return;
             int refId = (mDsp.IsPlaying && mDsp.CurrentPreset != null) ? mDsp.CurrentPreset.Id : mState.LastPresetId;
-            int idx = 0;
-            for (int i = 0; i < mPresets.Count; i++)
+            int nextId = JourneyOrderPolicy.GetNextOrderedPresetId(mPresets, refId, delta);
+            PresetItem nextPreset = PresetCatalog.FindById(mPresets, nextId);
+            if (nextPreset != null) PlayPreset(nextPreset);
+        }
+
+        private void ClearRoutineStateOnly()
+        {
+            if (mRoutineTimer != null) mRoutineTimer.Stop();
+            mActiveRoutine = null;
+            mRoutineStepIndex = 0;
+            mRoutineStepRemainingSec = 0;
+        }
+
+        public void StopRoutineOnly()
+        {
+            ClearRoutineStateOnly();
+            UpdateTrayTooltip();
+            if (mMainWin != null && mMainWin.IsVisible) mMainWin.RefreshDashboard(false);
+            if (mMiniWin != null && mMiniWin.IsVisible) mMiniWin.SyncMini();
+        }
+
+        public void StartRoutine(string routineId)
+        {
+            RoutineCourse rc = JourneyOrderPolicy.GetRoutineById(routineId);
+            if (rc == null || rc.Steps == null || rc.Steps.Length == 0) return;
+
+            if (mSleepTimer != null) mSleepTimer.Stop();
+            mSleepPresetMin = 0;
+            mSleepRemainingSec = 0;
+
+            mActiveRoutine = rc;
+            mRoutineStepIndex = 0;
+            mRoutineStepRemainingSec = rc.Steps[0].DurationMinutes * 60;
+
+            if (mRoutineTimer == null)
             {
-                if (mPresets[i].Id == refId)
-                {
-                    idx = i;
-                    break;
-                }
+                mRoutineTimer = new System.Windows.Threading.DispatcherTimer();
+                mRoutineTimer.Interval = TimeSpan.FromSeconds(1);
+                mRoutineTimer.Tick += OnRoutineTick;
             }
-            int count = mPresets.Count;
-            int nextIdx = ((idx + delta) % count + count) % count;
-            PlayPreset(mPresets[nextIdx]);
+            mRoutineTimer.Start();
+
+            PresetItem firstPreset = PresetCatalog.FindById(mPresets, rc.Steps[0].PresetId);
+            PlayPresetInternal(firstPreset, true);
+            if (mMainWin != null && mMainWin.IsVisible) mMainWin.RefreshSleepTimerUi();
+        }
+
+        public void AdvanceRoutineStep()
+        {
+            if (mActiveRoutine == null || mActiveRoutine.Steps == null) return;
+            int nextStep = mRoutineStepIndex + 1;
+            if (nextStep >= mActiveRoutine.Steps.Length)
+            {
+                StopPlayback();
+                return;
+            }
+            mRoutineStepIndex = nextStep;
+            mRoutineStepRemainingSec = mActiveRoutine.Steps[nextStep].DurationMinutes * 60;
+            PresetItem nextPreset = PresetCatalog.FindById(mPresets, mActiveRoutine.Steps[nextStep].PresetId);
+            PlayPresetInternal(nextPreset, true);
+        }
+
+        private void OnRoutineTick(object sender, EventArgs e)
+        {
+            if (mActiveRoutine == null)
+            {
+                if (mRoutineTimer != null) mRoutineTimer.Stop();
+                return;
+            }
+            if (mRoutineStepRemainingSec > 0) mRoutineStepRemainingSec--;
+            if (mRoutineStepRemainingSec <= 0)
+            {
+                int nextStep = mRoutineStepIndex + 1;
+                if (nextStep < mActiveRoutine.Steps.Length)
+                {
+                    mRoutineStepIndex = nextStep;
+                    mRoutineStepRemainingSec = mActiveRoutine.Steps[nextStep].DurationMinutes * 60;
+                    PresetItem nextPreset = PresetCatalog.FindById(mPresets, mActiveRoutine.Steps[nextStep].PresetId);
+                    PlayPresetInternal(nextPreset, true);
+                }
+                else
+                {
+                    ClearRoutineStateOnly();
+                    if (mState.GentleSleepFade)
+                    {
+                        mAudio.GentleStopPlayback(20.0);
+                        UpdateTrayTooltip();
+                        if (mMainWin != null && mMainWin.IsVisible) mMainWin.RefreshDashboard(false);
+                        if (mMiniWin != null && mMiniWin.IsVisible) mMiniWin.SyncMini();
+                    }
+                    else
+                    {
+                        StopPlayback();
+                    }
+                }
+                return;
+            }
+            UpdateTrayTooltip();
+            if (mMainWin != null && mMainWin.IsVisible) mMainWin.RefreshRoutineBannerUi();
+            if (mMiniWin != null && mMiniWin.IsVisible) mMiniWin.SyncMini();
         }
 
         public bool IsFavorite(int presetId)
@@ -756,7 +1017,22 @@ namespace VortaAegisPC
                             if (mSleepTimer != null) mSleepTimer.Stop();
                             mSleepPresetMin = 0;
                             mSleepRemainingSec = 0;
-                            StopPlayback();
+                            if (mState.GentleSleepFade)
+                            {
+                                ClearRoutineStateOnly();
+                                mAudio.GentleStopPlayback(20.0);
+                                UpdateTrayTooltip();
+                                if (mMainWin != null && mMainWin.IsVisible)
+                                {
+                                    mMainWin.RefreshSleepTimerUi();
+                                    mMainWin.RefreshDashboard(false);
+                                }
+                                if (mMiniWin != null && mMiniWin.IsVisible) mMiniWin.SyncMini();
+                            }
+                            else
+                            {
+                                StopPlayback();
+                            }
                             return;
                         }
                         UpdateTrayTooltip();
@@ -774,6 +1050,8 @@ namespace VortaAegisPC
         public void StopPlayback()
         {
             mPlaybackStartedUtc = DateTime.MinValue;
+            mLastSoftenNotice = "";
+            ClearRoutineStateOnly();
             if (mSleepTimer != null) mSleepTimer.Stop();
             mSleepPresetMin = 0;
             mSleepRemainingSec = 0;
@@ -792,11 +1070,40 @@ namespace VortaAegisPC
             int clamped = VolumeCurve.ClampPercent(percent);
             mState.VolumePercent = clamped;
             mState.IsMuted = muted;
+            mLastSoftenNotice = "";
+            if (mState.RememberPerPresetVolume && !muted && mDsp.IsPlaying && mDsp.CurrentPreset != null)
+            {
+                if (mState.PerPresetVolumes == null) mState.PerPresetVolumes = new Dictionary<string, int>();
+                mState.PerPresetVolumes[mDsp.CurrentPreset.Id.ToString(CultureInfo.InvariantCulture)] = clamped;
+            }
             mDsp.SetVolume(clamped, muted);
             AppStateStore.Save(mState);
             UpdateTrayTooltip();
             if (mMainWin != null && mMainWin.IsVisible) mMainWin.RefreshVolumeControls();
             if (mMiniWin != null && mMiniWin.IsVisible) mMiniWin.SyncMini();
+        }
+
+        public void ApplyAmbientBed(int ambientType, int mixPercent)
+        {
+            int t = ambientType < AegisDspEngine.AMBIENT_OFF ? AegisDspEngine.AMBIENT_OFF : (ambientType > AegisDspEngine.AMBIENT_RAIN ? AegisDspEngine.AMBIENT_RAIN : ambientType);
+            int mix = mixPercent < 0 ? 0 : (mixPercent > AegisDspEngine.AMBIENT_MAX_MIX ? AegisDspEngine.AMBIENT_MAX_MIX : mixPercent);
+            mState.AmbientType = t;
+            mState.AmbientMixPercent = mix;
+            mDsp.SetAmbientBed(t, mix);
+            AppStateStore.Save(mState);
+            if (mMainWin != null && mMainWin.IsVisible) mMainWin.RefreshAmbientControls();
+        }
+
+        public void ApplyRememberPerPresetVolume(bool enabled)
+        {
+            mState.RememberPerPresetVolume = enabled;
+            AppStateStore.Save(mState);
+        }
+
+        public void ApplyGentleSleepFade(bool enabled)
+        {
+            mState.GentleSleepFade = enabled;
+            AppStateStore.Save(mState);
         }
 
         public void ApplyOutputProfile(PcOutputProfile profile)
@@ -888,6 +1195,47 @@ namespace VortaAegisPC
             }
         }
 
+        public void ShowBeginnerGuideDialog()
+        {
+            try
+            {
+                if (mGuideWin != null && mGuideWin.IsVisible)
+                {
+                    mGuideWin.Activate();
+                    return;
+                }
+                Window owner = (mMainWin != null && mMainWin.IsVisible) ? (Window)mMainWin : null;
+                mGuideWin = new BeginnerGuideWindow(owner);
+                mGuideWin.Closed += delegate { mGuideWin = null; };
+                mGuideWin.Show();
+                mGuideWin.Activate();
+            }
+            catch
+            {
+            }
+        }
+
+        public void ShowPresetDetailDialog(PresetItem preset)
+        {
+            if (preset == null) return;
+            try
+            {
+                if (mDetailWin != null && mDetailWin.IsVisible)
+                {
+                    mDetailWin.Close();
+                    mDetailWin = null;
+                }
+                Window owner = (mMainWin != null && mMainWin.IsVisible) ? (Window)mMainWin : null;
+                mDetailWin = new PresetDetailWindow(this, preset, owner);
+                mDetailWin.Closed += delegate { mDetailWin = null; };
+                mDetailWin.Show();
+                mDetailWin.Activate();
+            }
+            catch
+            {
+            }
+        }
+
         public void OpenDocumentationFile(string kind)
         {
             try
@@ -948,6 +1296,16 @@ namespace VortaAegisPC
                 mAboutWin.Close();
                 mAboutWin = null;
             }
+            if (mGuideWin != null && mGuideWin.IsVisible)
+            {
+                mGuideWin.Close();
+                mGuideWin = null;
+            }
+            if (mDetailWin != null && mDetailWin.IsVisible)
+            {
+                mDetailWin.Close();
+                mDetailWin = null;
+            }
             if (mMainWin != null)
             {
                 mMainWin.ShowInTaskbar = false;
@@ -965,6 +1323,7 @@ namespace VortaAegisPC
         {
             mAllowExit = true;
             if (mSleepTimer != null) mSleepTimer.Stop();
+            if (mRoutineTimer != null) mRoutineTimer.Stop();
             AppStateStore.Save(mState);
             mAudio.StopAndWaitFadeOut(600);
             mAudio.Dispose();
@@ -975,6 +1334,8 @@ namespace VortaAegisPC
                 mTrayIcon.Dispose();
                 mTrayIcon = null;
             }
+            if (mDetailWin != null) mDetailWin.Close();
+            if (mGuideWin != null) mGuideWin.Close();
             if (mAboutWin != null) mAboutWin.Close();
             if (mMainWin != null) mMainWin.Close();
             if (mMiniWin != null) mMiniWin.Close();
@@ -1065,6 +1426,14 @@ namespace VortaAegisPC
             public bool AllowExit { get { return AllowExitFlag; } }
             public int SleepTimerRemainingSeconds { get { return 0; } }
             public int SleepTimerPresetMinutes { get { return 0; } }
+            public string ActiveRoutineId { get { return ""; } }
+            public string ActiveRoutineTitle { get { return ""; } }
+            public int ActiveRoutineStepIndex { get { return 0; } }
+            public int ActiveRoutineStepCount { get { return 0; } }
+            public string ActiveRoutineStepLabel { get { return ""; } }
+            public int RoutineStepRemainingSeconds { get { return 0; } }
+            public int RoutineTotalRemainingSeconds { get { return 0; } }
+            public string LastSoftenNotice { get { return ""; } }
             public long PlaybackElapsedSeconds { get { return 0; } }
             public string ActiveEndpointDisplayName { get { return "Test"; } }
 
@@ -1072,6 +1441,12 @@ namespace VortaAegisPC
             public void PlayAdjacentPreset(int delta) { }
             public void StopPlayback() { }
             public void ApplyVolume(int percent, bool muted) { }
+            public void ApplyAmbientBed(int ambientType, int mixPercent) { }
+            public void ApplyRememberPerPresetVolume(bool enabled) { }
+            public void ApplyGentleSleepFade(bool enabled) { }
+            public void StartRoutine(string routineId) { }
+            public void AdvanceRoutineStep() { }
+            public void StopRoutineOnly() { }
             public void ApplyOutputProfile(PcOutputProfile profile) { }
             public void ApplyDevice(string deviceId) { }
             public void ApplyUltrasonicGuard(bool enabled) { }
@@ -1080,6 +1455,8 @@ namespace VortaAegisPC
             public void ReloadPacks() { }
             public void OpenPacksFolder() { }
             public void ShowAboutDialog() { }
+            public void ShowBeginnerGuideDialog() { }
+            public void ShowPresetDetailDialog(PresetItem preset) { }
             public void OpenDocumentationFile(string kind) { }
             public void SaveLastTab(int tabIndex) { }
             public void SwitchToMiniMode(bool mini)
@@ -1098,13 +1475,13 @@ namespace VortaAegisPC
         {
             sSelfPassed = 0;
 
-            // 1. Core 48 + Bundled Commercial Expansion Pack Schema Loader
+            // 1. Core 48 + PC Pro 16 + Journey 24 == 88 presets
             IList<PresetItem> core = PresetCatalog.LoadAll(baseDir);
             Assert(core.Count == 48, "48 core presets preserved for Android parity");
 
             CatalogLoadResult cat = PresetCatalog.LoadAllWithPacks(baseDir, null);
-            Assert(cat.Presets.Count == 64, "Core 48 + Pro Pack 16 == 64 scenarios");
-            Assert(cat.Packs.Count >= 2, "Core + Pro pack metadata loaded");
+            Assert(cat.Presets.Count == 88, "Core 48 + Pro 16 + Journey 24 == 88 scenarios");
+            Assert(cat.Packs.Count >= 3, "Core + Pro + Journey pack metadata loaded");
             Assert(cat.SkippedFiles.Count == 0, "Bundled packs validated cleanly with zero skipped files");
             IList<PresetItem> all = cat.Presets;
 
@@ -1115,14 +1492,82 @@ namespace VortaAegisPC
             {
                 memPacks.Add(new KeyValuePair<string, string>(bundledProPath, File.ReadAllText(bundledProPath, Encoding.UTF8)));
             }
+            string bundledJourneyPath = Path.Combine(baseDir, "packs", "vorta_journey_pack_v1.json");
+            if (File.Exists(bundledJourneyPath))
+            {
+                memPacks.Add(new KeyValuePair<string, string>(bundledJourneyPath, File.ReadAllText(bundledJourneyPath, Encoding.UTF8)));
+            }
             memPacks.Add(new KeyValuePair<string, string>("valid_tmp.json",
                 "{\"schemaVersion\":1,\"packId\":\"tmp-test-pack\",\"packName\":\"임시 테스트 팩\",\"packVersion\":\"1.0.0\",\"presets\":[{\"id\":9001,\"shortCode\":\"T01\",\"tabIndex\":2,\"title\":\"임시 집중 팩\",\"badge\":\"테스트\",\"desc\":\"테스트\",\"freq1\":220,\"freq2\":230,\"isSweep\":false,\"sweepStart\":0,\"sweepEnd\":0,\"sweepDurationSec\":0,\"isAntiPhase\":false,\"binauralBeat\":10,\"noiseType\":0,\"fmMod\":false,\"fmDepth\":0,\"fmRate\":0,\"amMod\":false,\"amDepth\":0,\"amRate\":0}]}"));
             memPacks.Add(new KeyValuePair<string, string>("bad_corrupt.json", "{ invalid json !!!"));
             memPacks.Add(new KeyValuePair<string, string>("bad_schema.json", "{\"schemaVersion\":99,\"packId\":\"bad\",\"packName\":\"Bad\",\"presets\":[]}"));
 
             CatalogLoadResult tmpRes = PresetCatalog.LoadAllWithPackPayloads(baseDir, memPacks);
-            Assert(tmpRes.Presets.Count == 65, "Valid external pack loaded cleanly alongside core+pro without filesystem writes");
+            Assert(tmpRes.Presets.Count == 89, "Valid external pack loaded cleanly alongside core+pro+journey without filesystem writes");
             Assert(tmpRes.SkippedFiles.Count == 2, "Corrupted and future-schema packs skipped gracefully without crash");
+
+            // 1B. JourneyOrderPolicy 88/88 Stage Coverage, Tab 5 Order, 4 Auto-Courses & PresetAdvisor Clarity Checks
+            HashSet<int> allIdSet = new HashSet<int>();
+            for (int i = 0; i < all.Count; i++) allIdSet.Add(all[i].Id);
+            HashSet<int> stagedSet = new HashSet<int>();
+            for (int t = 0; t < TabSyncPolicy.TAB_COUNT; t++)
+            {
+                StageGroup[] groups = JourneyOrderPolicy.GetStagesForTab(t);
+                Assert(groups.Length >= 3, "At least 3 stages in tab=" + t);
+                int prevStageNum = 0;
+                for (int g = 0; g < groups.Length; g++)
+                {
+                    Assert(groups[g].TabIndex == t, "Stage TabIndex matches " + t);
+                    Assert(groups[g].StageNum > prevStageNum, "Stage numbers strictly ascending");
+                    prevStageNum = groups[g].StageNum;
+                    Assert(groups[g].PresetIds.Length > 0, "Non-empty stage " + groups[g].Title);
+                    for (int k = 0; k < groups[g].PresetIds.Length; k++)
+                    {
+                        int pid = groups[g].PresetIds[k];
+                        Assert(stagedSet.Add(pid), "No duplicate staged ID=" + pid);
+                        PresetItem pm = PresetCatalog.FindById(all, pid);
+                        Assert(pm != null && pm.Id == pid && pm.TabIndex == t, "Staged preset valid for tab " + t + " id=" + pid);
+                    }
+                }
+            }
+            Assert(stagedSet.Count == 88 && stagedSet.SetEquals(allIdSet), "StageGroups cover 100% of 88 presets");
+            Assert(JourneyOrderPolicy.GetNextOrderedPresetId(all, 201, 1) == 202, "Workout chronological next 201->202");
+            Assert(JourneyOrderPolicy.GetNextOrderedPresetId(all, 202, 1) == 35, "Workout chronological next 202->35");
+            Assert(JourneyOrderPolicy.GetNextOrderedPresetId(all, 39, 1) == 219, "Tab 5 -> Tab 6 wrap");
+
+            IList<RoutineCourse> courses = JourneyOrderPolicy.GetAllRoutines();
+            Assert(courses.Count == 4, "4 Auto-Courses present");
+            for (int c = 0; c < courses.Count; c++)
+            {
+                Assert(courses[c].Steps.Length >= 3 && courses[c].GetTotalMinutes() >= 55, "Course valid duration: " + courses[c].Id);
+                for (int stIdx = 0; stIdx < courses[c].Steps.Length; stIdx++)
+                {
+                    PresetItem stepPm = PresetCatalog.FindById(all, courses[c].Steps[stIdx].PresetId);
+                    Assert(stepPm != null && stepPm.Id == courses[c].Steps[stIdx].PresetId, "Course step valid ID");
+                }
+            }
+
+            string glossaryTxt = PresetAdvisor.GetBeginnerGlossaryText();
+            Assert(glossaryTxt.Contains("포모도로") && glossaryTxt.Contains("4-6 호흡") && glossaryTxt.Contains("딥워크"), "Glossary contains plain terms");
+            string[] synQueries = new string[] { "포모도로", "잠", "헬스", "워밍업", "쿨다운", "근육통", "거북목", "층간", "40hz" };
+            for (int qIdx = 0; qIdx < synQueries.Length; qIdx++)
+            {
+                int hits = 0;
+                for (int i = 0; i < all.Count; i++)
+                {
+                    if (PresetAdvisor.MatchesQuery(all[i], TabSyncPolicy.TAB_SHORT_NAMES[all[i].TabIndex], synQueries[qIdx])) hits++;
+                }
+                Assert(hits >= 1, "Search synonym hits >= 1 for " + synQueries[qIdx]);
+            }
+            for (int i = 0; i < all.Count; i++)
+            {
+                PresetItem ap = all[i];
+                string tb = ap.Title + " " + ap.Badge;
+                Assert(!tb.Contains("CNS") && !tb.Contains("DOMS") && !tb.Contains("VDT") && !tb.Contains("HIIT"), "No unexplained jargon acronym in id=" + ap.Id);
+                string exp = PresetAdvisor.BuildPlainExplanation(ap);
+                Assert(!string.IsNullOrEmpty(exp) && exp.Contains("[이게 뭔가요?]") && exp.Contains("[참고 원리]"), "Plain explanation built for id=" + ap.Id);
+            }
+            Assert(PresetAdvisor.ShouldWarnHighVolumeSwitch(PresetCatalog.FindById(all, 45), PresetCatalog.FindById(all, 13), 85), "High volume safe switch warns for calm preset");
 
             // 2. VolumeCurve checks (0..120% with unity 100% + clean boost up to 120%)
             AssertNear(VolumeCurve.MIN_DB, -48.0, 1e-12, "MIN_DB == -48.0");
@@ -1249,6 +1694,87 @@ namespace VortaAegisPC
             for (int i = 0; i < fastCompL.Length; i++) postStopPeak = Math.Max(postStopPeak, Math.Abs(fastCompL[i]));
             Assert(postStopPeak < 1e-6f, "Scope ring clears cleanly on stop");
 
+            // 7B. Binaural Progression Ramp (J01/J08), Stereo Pink (J07), Ambient Bed 60%@120%, Profile De-clicker & 20s Gentle Stop
+            {
+                PresetItem j01 = PresetCatalog.FindById(all, 201);
+                AegisDspEngine rampDsp = new AegisDspEngine(48000);
+                rampDsp.SetOutputProfile(PcOutputProfile.PcSpeaker);
+                rampDsp.SetVolume(100, false);
+                rampDsp.PlayPreset(j01);
+                Assert(rampDsp.IsPcCompensationActive, "PcSpeaker compensation active on J01 binaural ramp");
+                float[] sBuf = new float[48000 * 2];
+                rampDsp.RenderStereoFloat(sBuf, 48000);
+                float beatStart = rampDsp.LiveBeatHz;
+                for (int sec = 1; sec < 150; sec++) rampDsp.RenderStereoFloat(sBuf, 48000);
+                float beatMid = rampDsp.LiveBeatHz;
+                for (int sec = 150; sec < 310; sec++) rampDsp.RenderStereoFloat(sBuf, 48000);
+                float beatEndHold = rampDsp.LiveBeatHz;
+                Assert(beatStart >= 9.9f && beatStart < 10.5f, "J01 ramp starts near 10Hz");
+                Assert(beatMid > beatStart + 2.0f && beatMid < 17.5f, "J01 ramp progresses upward");
+                AssertNear(beatEndHold, 18.0, 0.05, "J01 ramp clamps & holds at 18.0 Hz past 300s");
+                Assert(rampDsp.OvershootCount == 0, "J01 binaural ramp zero overshoot");
+
+                // True stereo decorrelated Pink noise (J07 id=207, steady state after fade-in)
+                PresetItem j07 = PresetCatalog.FindById(all, 207);
+                AegisDspEngine pinkDsp = new AegisDspEngine(48000);
+                pinkDsp.SetOutputProfile(PcOutputProfile.PureRaw);
+                pinkDsp.SetVolume(100, false);
+                pinkDsp.PlayPreset(j07);
+                float[] pBuf = new float[4096 * 2];
+                for (int w = 0; w < 6; w++) pinkDsp.RenderStereoFloat(pBuf, 4096);
+                double maxLrPink = 0.0;
+                for (int k = 0; k < 4096; k++)
+                {
+                    double d = Math.Abs(pBuf[k * 2] - pBuf[k * 2 + 1]);
+                    if (d > maxLrPink) maxLrPink = d;
+                }
+                Assert(maxLrPink > 0.01, "True stereo decorrelated Pink noise L != R (" + maxLrPink.ToString("F4", CultureInfo.InvariantCulture) + ")");
+
+                // Ambient bed 60% @ 120% boost + ultrasonic bypass
+                int[] ambModes = new int[] { AegisDspEngine.AMBIENT_BROWN, AegisDspEngine.AMBIENT_PINK, AegisDspEngine.AMBIENT_RAIN };
+                for (int am = 0; am < ambModes.Length; am++)
+                {
+                    AegisDspEngine ambDsp = new AegisDspEngine(48000);
+                    ambDsp.SetOutputProfile(PcOutputProfile.PcSpeaker);
+                    ambDsp.SetVolume(120, false);
+                    ambDsp.SetAmbientBed(ambModes[am], 60);
+                    ambDsp.PlayPreset(PresetCatalog.FindById(all, 102));
+                    float[] aBuf = new float[480 * 2];
+                    for (int b = 0; b < 60; b++)
+                    {
+                        ambDsp.RenderStereoFloat(aBuf, 480);
+                        for (int k = 0; k < aBuf.Length; k++)
+                        {
+                            Assert(Math.Abs(aBuf[k]) <= (float)(AegisDspEngine.CLEAN_BOOST_CEILING + 1e-6), "Ambient 60% @ 120% within -0.50 dBTP");
+                        }
+                    }
+                    Assert(ambDsp.OvershootCount == 0, "Ambient bed mode " + ambModes[am] + " zero overshoots");
+                }
+
+                // Post-AM preset switch + profile-switch de-clicker
+                AegisDspEngine profSw = new AegisDspEngine(48000);
+                profSw.SetVolume(100, false);
+                profSw.SetOutputProfile(PcOutputProfile.PcSpeaker);
+                profSw.PlayPreset(PresetCatalog.FindById(all, 109));
+                float[] swBuf = new float[512 * 2];
+                for (int b = 0; b < 30; b++) profSw.RenderStereoFloat(swBuf, 512);
+                float endAm = swBuf[(512 - 1) * 2];
+                profSw.PlayPreset(PresetCatalog.FindById(all, 35));
+                profSw.RenderStereoFloat(swBuf, 512);
+                Assert(Math.Abs(swBuf[0] - endAm) < 0.025, "Post-AM de-clicker keeps transition continuous");
+                profSw.SetOutputProfile(PcOutputProfile.PureRaw);
+                float beforeProf = swBuf[(512 - 1) * 2];
+                profSw.RenderStereoFloat(swBuf, 512);
+                Assert(Math.Abs(swBuf[0] - beforeProf) < 0.025, "Profile switch de-clicker keeps transition continuous");
+                Assert(profSw.OvershootCount == 0, "Profile switch zero overshoots");
+
+                // RequestGentleStop squared-envelope fade-out
+                profSw.RequestGentleStop(2.0);
+                Assert(profSw.IsGentleFadingOut, "Gentle fade-out active flag set");
+                for (int b = 0; b < 200; b++) profSw.RenderStereoFloat(swBuf, 512);
+                Assert(!profSw.IsActive && Math.Abs(swBuf[(512 - 1) * 2]) < 1e-6f, "Gentle fade-out completes cleanly to silence");
+            }
+
             // 8. Live Windows WASAPI Shared Mode probe
             AegisDspEngine probeDsp = new AegisDspEngine(48000);
             string probeInfo = WasapiAudioEngine.RunSelfTestProbe(probeDsp);
@@ -1271,8 +1797,18 @@ namespace VortaAegisPC
             Assert(st.FavoriteIds.Count == 2 && st.FavoriteIds[1] == 102, "FavoriteIds supports Pro Pack IDs");
             Assert(st.RecentPresetIds.Count == 8, "RecentPresetIds deduplicated and capped at 8");
             st.ConsolePaneWidth = 120.0;
+            st.AmbientType = AegisDspEngine.AMBIENT_RAIN;
+            st.AmbientMixPercent = 90;
+            st.PerPresetVolumes["102"] = 150;
+            st.PerPresetVolumes["badkey"] = 50;
             AppStateStore.Sanitize(st);
             AssertNear(st.ConsolePaneWidth, 340.0, 1e-6, "ConsolePaneWidth clamps min 340");
+            Assert(st.AmbientType == AegisDspEngine.AMBIENT_RAIN && st.AmbientMixPercent == 60, "Ambient mix clamps max 60");
+            Assert(st.PerPresetVolumes.Count == 1 && st.PerPresetVolumes["102"] == 120, "PerPresetVolumes sanitized with string keys");
+            System.Web.Script.Serialization.JavaScriptSerializer stateSer = new System.Web.Script.Serialization.JavaScriptSerializer();
+            string rtJson = stateSer.Serialize(st);
+            AppStateData rtObj = stateSer.Deserialize<AppStateData>(rtJson);
+            Assert(rtObj != null && rtObj.PerPresetVolumes != null && rtObj.PerPresetVolumes["102"] == 120, "AppStateData JSON round-trip succeeds");
 
             // 10. UpdateChecker SemVer 2.0 (incl. pre-release precedence) & WPF dark XAML styles
             Assert(UpdateChecker.CompareSemVer("3.2.0", "3.2.0") == 0, "SemVer equal");

@@ -20,17 +20,28 @@ namespace VortaAegisPC
         public const int SCOPE_LOW_DECIM = 32; // 48000 / 32 = 1500 Hz -> 2.73s window for low frequencies
         public const int SCOPE_LOW_RING_SIZE = 4096;
 
+        public const int AMBIENT_OFF = 0;
+        public const int AMBIENT_BROWN = 1;
+        public const int AMBIENT_PINK = 2;
+        public const int AMBIENT_RAIN = 3;
+        public const int AMBIENT_MAX_MIX = 60;
+
         private int mSampleRate = 48000;
         private double mFadeInStep;
         private double mFadeOutStep;
+        private double mActiveFadeOutStep;
         private double mGainSmoothAlpha;
+        private double mAmbSmoothAlpha;
         private double mDeclickDecay;
         private double mLimReleaseAlpha;
         private double mTinnitusLpAlpha;
+        private double mRainLpAlpha;
+        private double mRainHpAlpha;
 
         private readonly object mCmdLock = new object();
         private volatile bool mActive;
         private volatile bool mFadeOut;
+        private volatile bool mGentleFadeOut;
         private volatile PresetItem mCurrentPreset;
         private volatile PcOutputProfile mOutputProfile = PcOutputProfile.PcSpeaker;
         private volatile bool mUltrasonicGuardEnabled = true;
@@ -39,9 +50,30 @@ namespace VortaAegisPC
         private volatile bool mIsMuted;
         private double mTargetLinearGain = VolumeCurve.PercentToLinearGain(VolumeCurve.DEFAULT_PERCENT);
 
+        private volatile int mAmbientType = AMBIENT_OFF;
+        private volatile int mAmbientMixPercent = 25;
+        private double mAmbMixTarget = 0.0;
+        private double mAmbMixSmooth = 0.0;
+        private uint mAmbRngState = 0x7A3D91C5u;
+        private double mAmbBrownL;
+        private double mAmbBrownR;
+        private double mAmbPk0L;
+        private double mAmbPk1L;
+        private double mAmbPk2L;
+        private double mAmbPk0R;
+        private double mAmbPk1R;
+        private double mAmbPk2R;
+        private double mAmbRainLpL;
+        private double mAmbRainLpR;
+        private double mAmbRainHpL;
+        private double mAmbRainHpR;
+        private double mAmbRainDropL;
+        private double mAmbRainDropR;
+
         private long mPresetFrameCounter;
         private float mLiveFreqHz;
         private float mLiveFreqRHz;
+        private float mLiveBeatHz;
         private float mPeakLevel;
         private float mLiveRmsDbfs = -96.0f;
         private float mSweepProgress = 0.0f;
@@ -54,10 +86,14 @@ namespace VortaAegisPC
         private double mPhaseAm;
         private double mCarrierPhase;
         private double mBeatPhase;
+        private double mFlutterPhase;
 
-        private double mB0;
-        private double mB1;
-        private double mB2;
+        private double mB0L;
+        private double mB1L;
+        private double mB2L;
+        private double mB0R;
+        private double mB1R;
+        private double mB2R;
         private double mBrownL;
         private double mBrownR;
         private double mTinB0L;
@@ -72,6 +108,7 @@ namespace VortaAegisPC
         private double mLimGain = 1.0;
 
         private int mLastPresetId = -1;
+        private PcOutputProfile mLastProfile = PcOutputProfile.PcSpeaker;
         private double mPrevRawL;
         private double mPrevRawR;
         private double mDeclickL;
@@ -115,18 +152,24 @@ namespace VortaAegisPC
             mSampleRate = sr;
             mFadeInStep = 1.0 / (sr * 1.0);
             mFadeOutStep = 1.0 / (sr * 0.5);
+            mActiveFadeOutStep = mFadeOutStep;
             mGainSmoothAlpha = 1.0 - Math.Exp(-1.0 / (0.015 * sr));
+            mAmbSmoothAlpha = 1.0 - Math.Exp(-1.0 / (0.025 * sr));
             mDeclickDecay = Math.Pow(0.993, 48000.0 / sr);
             mLimReleaseAlpha = 1.0 - Math.Exp(-1.0 / (0.180 * sr));
             mTinnitusLpAlpha = 1.0 - Math.Exp(-TWO_PI * 2800.0 / sr);
+            mRainLpAlpha = 1.0 - Math.Exp(-TWO_PI * 2600.0 / sr);
+            mRainHpAlpha = 1.0 - Math.Exp(-TWO_PI * 340.0 / sr);
         }
 
         public int SampleRate { get { return mSampleRate; } }
         public bool IsActive { get { return mActive; } }
         public bool IsPlaying { get { return mActive && !mFadeOut; } }
+        public bool IsGentleFadingOut { get { return mActive && mFadeOut && mGentleFadeOut; } }
         public PresetItem CurrentPreset { get { return mCurrentPreset; } }
         public float LiveFreqHz { get { return IsPlaying ? mLiveFreqHz : 0.0f; } }
         public float LiveFreqRHz { get { return IsPlaying ? mLiveFreqRHz : 0.0f; } }
+        public float LiveBeatHz { get { return IsPlaying ? mLiveBeatHz : 0.0f; } }
         public float PeakLevel { get { return mActive ? mPeakLevel : 0.0f; } }
         public float LiveRmsDbfs { get { return mActive ? mLiveRmsDbfs : -96.0f; } }
         public float SweepProgress { get { return IsPlaying ? mSweepProgress : 0.0f; } }
@@ -137,6 +180,8 @@ namespace VortaAegisPC
         public bool UltrasonicGuardEnabled { get { return mUltrasonicGuardEnabled; } }
         public int VolumePercent { get { return mVolumePercent; } }
         public bool IsMuted { get { return mIsMuted; } }
+        public int AmbientType { get { return mAmbientType; } }
+        public int AmbientMixPercent { get { return mAmbientMixPercent; } }
 
         public bool IsPcCompensationActive
         {
@@ -147,7 +192,7 @@ namespace VortaAegisPC
                 double f = mLiveFreqHz > 0f ? mLiveFreqHz : (p.IsSweep ? p.SweepStart : p.Freq1);
                 if (mOutputProfile == PcOutputProfile.PcSpeaker)
                 {
-                    return (f > 0.0 && f < 85.0) || (p.BinauralBeat > 0f);
+                    return (f > 0.0 && f < 85.0) || (p.BinauralBeat > 0f) || p.IsBinauralRamp;
                 }
                 if (mOutputProfile == PcOutputProfile.Headphone)
                 {
@@ -237,6 +282,18 @@ namespace VortaAegisPC
             mUltrasonicGuardEnabled = enabled;
         }
 
+        public void SetAmbientBed(int ambientType, int mixPercent)
+        {
+            lock (mCmdLock)
+            {
+                int type = ambientType < AMBIENT_OFF ? AMBIENT_OFF : (ambientType > AMBIENT_RAIN ? AMBIENT_RAIN : ambientType);
+                int mix = mixPercent < 0 ? 0 : (mixPercent > AMBIENT_MAX_MIX ? AMBIENT_MAX_MIX : mixPercent);
+                mAmbientType = type;
+                mAmbientMixPercent = mix;
+                mAmbMixTarget = (type == AMBIENT_OFF) ? 0.0 : (mix / (double)AMBIENT_MAX_MIX);
+            }
+        }
+
         public void PlayPreset(PresetItem preset)
         {
             if (preset == null) return;
@@ -246,11 +303,22 @@ namespace VortaAegisPC
                 mCurrentPreset = preset;
                 mPresetFrameCounter = 0;
                 mFadeOut = false;
-                mFadeOutGain = 1.0;
-                mLiveFreqHz = preset.IsSweep ? preset.SweepStart : preset.Freq1;
-                mLiveFreqRHz = preset.IsSweep
-                    ? preset.SweepStart
-                    : (preset.BinauralBeat > 0f ? (preset.Freq1 + preset.BinauralBeat) : (preset.Freq2 > 0f ? preset.Freq2 : preset.Freq1));
+                mGentleFadeOut = false;
+                mActiveFadeOutStep = mFadeOutStep;
+                if (preset.IsBinauralRamp)
+                {
+                    mLiveFreqHz = preset.Freq1;
+                    mLiveFreqRHz = preset.Freq1 + preset.SweepStart;
+                    mLiveBeatHz = preset.SweepStart;
+                }
+                else
+                {
+                    mLiveFreqHz = preset.IsSweep ? preset.SweepStart : preset.Freq1;
+                    mLiveFreqRHz = preset.IsSweep
+                        ? preset.SweepStart
+                        : (preset.BinauralBeat > 0f ? (preset.Freq1 + preset.BinauralBeat) : (preset.Freq2 > 0f ? preset.Freq2 : preset.Freq1));
+                    mLiveBeatHz = preset.BinauralBeat > 0f ? preset.BinauralBeat : 0.0f;
+                }
                 mSweepProgress = 0.0f;
                 mUltrasonicGuarded = ComputeGuardActive(preset, mOutputProfile, mUltrasonicGuardEnabled);
 
@@ -258,21 +326,32 @@ namespace VortaAegisPC
                 {
                     mActive = true;
                     mFadeInGain = 0.0;
+                    mFadeOutGain = 1.0;
                     mLimGain = 1.0;
                     mLimiterGrDb = 0.0f;
                     mLiveRmsDbfs = -96.0f;
                     mOvershootCount = 0;
                     double initGain = mUltrasonicGuarded ? (mTargetLinearGain * 0.25) : mTargetLinearGain;
                     mSmoothedGain = mIsMuted ? 0.0 : initGain;
+                    mAmbMixSmooth = (preset.NoiseType == 2) ? 0.0 : mAmbMixTarget;
                     mLastPresetId = -1;
+                    mLastProfile = mOutputProfile;
                     mPrevRawL = 0.0;
                     mPrevRawR = 0.0;
                     mDeclickL = 0.0;
                     mDeclickR = 0.0;
-                    mB0 = 0.0; mB1 = 0.0; mB2 = 0.0;
+                    mFlutterPhase = 0.0;
+                    mB0L = 0.0; mB1L = 0.0; mB2L = 0.0;
+                    mB0R = 0.0; mB1R = 0.0; mB2R = 0.0;
                     mBrownL = 0.0; mBrownR = 0.0;
                     mTinB0L = 0.0; mTinB1L = 0.0;
                     mTinB0R = 0.0; mTinB1R = 0.0;
+                    mAmbBrownL = 0.0; mAmbBrownR = 0.0;
+                    mAmbPk0L = 0.0; mAmbPk1L = 0.0; mAmbPk2L = 0.0;
+                    mAmbPk0R = 0.0; mAmbPk1R = 0.0; mAmbPk2R = 0.0;
+                    mAmbRainLpL = 0.0; mAmbRainLpR = 0.0;
+                    mAmbRainHpL = 0.0; mAmbRainHpR = 0.0;
+                    mAmbRainDropL = 0.0; mAmbRainDropR = 0.0;
                     mDecimAccOutL = 0.0; mDecimAccOutR = 0.0;
                     mDecimAccFundL = 0.0; mDecimAccFundR = 0.0;
                     mDecimCount = 0;
@@ -286,6 +365,22 @@ namespace VortaAegisPC
             {
                 if (mActive)
                 {
+                    mActiveFadeOutStep = mFadeOutStep;
+                    mGentleFadeOut = false;
+                    mFadeOut = true;
+                }
+            }
+        }
+
+        public void RequestGentleStop(double durationSec)
+        {
+            lock (mCmdLock)
+            {
+                if (mActive)
+                {
+                    double clampedSec = durationSec < 0.5 ? 0.5 : (durationSec > 60.0 ? 60.0 : durationSec);
+                    mActiveFadeOutStep = 1.0 / (mSampleRate * clampedSec);
+                    mGentleFadeOut = true;
                     mFadeOut = true;
                 }
             }
@@ -305,6 +400,16 @@ namespace VortaAegisPC
             x ^= x >> 17;
             x ^= x << 5;
             mRngState = x;
+            return (x / 2147483647.5) - 1.0;
+        }
+
+        private double NextAmbientWhiteNoise()
+        {
+            uint x = mAmbRngState;
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            mAmbRngState = x;
             return (x / 2147483647.5) - 1.0;
         }
 
@@ -385,20 +490,38 @@ namespace VortaAegisPC
 
                 double fL;
                 double fR;
-                if (p.IsSweep)
+                double liveBeat = 0.0;
+                if (p.IsBinauralRamp)
+                {
+                    double progress = Math.Min(1.0, (double)mPresetFrameCounter / durationSamples);
+                    liveBeat = p.SweepStart + (p.SweepEnd - p.SweepStart) * progress;
+                    fL = p.Freq1;
+                    fR = p.Freq1 + liveBeat;
+                    if (i == 0)
+                    {
+                        mSweepProgress = (float)progress;
+                        mLiveBeatHz = (float)liveBeat;
+                    }
+                }
+                else if (p.IsSweep)
                 {
                     double cyclePos = (mPresetFrameCounter % cycleFrames) / durationSamples;
                     double tri = (cyclePos <= 1.0) ? cyclePos : (2.0 - cyclePos);
                     double sweepFreq = p.SweepStart + (p.SweepEnd - p.SweepStart) * tri;
                     fL = sweepFreq;
                     fR = sweepFreq;
-                    if (i == 0) mSweepProgress = (float)tri;
+                    if (i == 0)
+                    {
+                        mSweepProgress = (float)tri;
+                        mLiveBeatHz = 0.0f;
+                    }
                 }
                 else
                 {
                     fL = p.Freq1;
                     if (p.BinauralBeat > 0f)
                     {
+                        liveBeat = p.BinauralBeat;
                         fR = p.Freq1 + p.BinauralBeat;
                     }
                     else if (p.Freq2 > 0f)
@@ -409,7 +532,11 @@ namespace VortaAegisPC
                     {
                         fR = p.Freq1;
                     }
-                    if (i == 0) mSweepProgress = 0.0f;
+                    if (i == 0)
+                    {
+                        mSweepProgress = 0.0f;
+                        mLiveBeatHz = p.BinauralBeat > 0f ? p.BinauralBeat : 0.0f;
+                    }
                 }
 
                 // Capture nominal carrier before FM offset
@@ -473,19 +600,25 @@ namespace VortaAegisPC
                 // Noise / Flutter synthesis modes (all strictly bounded in [-1.0, 1.0])
                 if (p.NoiseType == 1)
                 {
-                    double white = NextWhiteNoise();
-                    mB0 = 0.99765 * mB0 + white * 0.0990460;
-                    mB1 = 0.96300 * mB1 + white * 0.2965164;
-                    mB2 = 0.57000 * mB2 + white * 1.0526913;
-                    double pinkRaw = (mB0 + mB1 + mB2 + white * 0.1848) * 0.12;
-                    double pink = Math.Tanh(pinkRaw * 0.85);
-                    sampleL = sampleL * 0.82 + pink * 0.15;
-                    sampleR = sampleR * 0.82 + pink * 0.15;
+                    // True stereo decorrelated Pink noise
+                    double wL = NextWhiteNoise();
+                    double wR = NextWhiteNoise();
+                    mB0L = 0.99765 * mB0L + wL * 0.0990460;
+                    mB1L = 0.96300 * mB1L + wL * 0.2965164;
+                    mB2L = 0.57000 * mB2L + wL * 1.0526913;
+                    mB0R = 0.99765 * mB0R + wR * 0.0990460;
+                    mB1R = 0.96300 * mB1R + wR * 0.2965164;
+                    mB2R = 0.57000 * mB2R + wR * 1.0526913;
+                    double pL = Math.Tanh(((mB0L + mB1L + mB2L + wL * 0.1848) * 0.12) * 0.85);
+                    double pR = Math.Tanh(((mB0R + mB1R + mB2R + wR * 0.1848) * 0.12) * 0.85);
+                    sampleL = sampleL * 0.82 + pL * 0.15;
+                    sampleR = sampleR * 0.82 + pR * 0.15;
                 }
                 else if (p.NoiseType == 3)
                 {
-                    double flutterPhase = (TWO_PI * 38.5 * mPresetFrameCounter) / sr;
-                    double flutter = 0.6 + 0.4 * Math.Sin(flutterPhase);
+                    mFlutterPhase += (TWO_PI * 38.5) / sr;
+                    if (mFlutterPhase > TWO_PI) mFlutterPhase -= TWO_PI;
+                    double flutter = 0.6 + 0.4 * Math.Sin(mFlutterPhase);
                     sampleL *= flutter;
                     sampleR *= flutter;
                 }
@@ -559,9 +692,9 @@ namespace VortaAegisPC
                             sampleR = (sampleR + hR) * 0.70;
                         }
 
-                        if (p.BinauralBeat > 0f)
+                        if (liveBeat > 0.0)
                         {
-                            mBeatPhase += (TWO_PI * p.BinauralBeat) / sr;
+                            mBeatPhase += (TWO_PI * liveBeat) / sr;
                             if (mBeatPhase > TWO_PI) mBeatPhase -= TWO_PI;
                             double pulse = 0.86 + 0.14 * Math.Sin(mBeatPhase);
                             sampleL *= pulse;
@@ -578,8 +711,60 @@ namespace VortaAegisPC
                     }
                 }
 
-                // Sample-by-sample preset-switch de-clicker
-                if (p.Id != mLastPresetId)
+                // Apply AM modulation BEFORE ambient mix & de-clicker
+                sampleL *= amGain;
+                sampleR *= amGain;
+
+                // Optional Ambient Soundscape Bed Mixer (Brown / Pink / Rain, skipped on ultrasonic presets)
+                int ambType = (p.NoiseType == 2) ? AMBIENT_OFF : mAmbientType;
+                double effAmbTarget = (ambType == AMBIENT_OFF) ? 0.0 : mAmbMixTarget;
+                mAmbMixSmooth += mAmbSmoothAlpha * (effAmbTarget - mAmbMixSmooth);
+                if (mAmbMixSmooth > 1e-5 && ambType != AMBIENT_OFF)
+                {
+                    double awL = NextAmbientWhiteNoise();
+                    double awR = NextAmbientWhiteNoise();
+                    double ambL = 0.0;
+                    double ambR = 0.0;
+                    if (ambType == AMBIENT_BROWN)
+                    {
+                        mAmbBrownL = 0.996 * mAmbBrownL + awL * 0.045;
+                        mAmbBrownR = 0.996 * mAmbBrownR + awR * 0.045;
+                        ambL = Math.Tanh(mAmbBrownL * 1.15);
+                        ambR = Math.Tanh(mAmbBrownR * 1.15);
+                    }
+                    else if (ambType == AMBIENT_PINK)
+                    {
+                        mAmbPk0L = 0.99765 * mAmbPk0L + awL * 0.0990460;
+                        mAmbPk1L = 0.96300 * mAmbPk1L + awL * 0.2965164;
+                        mAmbPk2L = 0.57000 * mAmbPk2L + awL * 1.0526913;
+                        mAmbPk0R = 0.99765 * mAmbPk0R + awR * 0.0990460;
+                        mAmbPk1R = 0.96300 * mAmbPk1R + awR * 0.2965164;
+                        mAmbPk2R = 0.57000 * mAmbPk2R + awR * 1.0526913;
+                        ambL = Math.Tanh(((mAmbPk0L + mAmbPk1L + mAmbPk2L + awL * 0.1848) * 0.12) * 0.90);
+                        ambR = Math.Tanh(((mAmbPk0R + mAmbPk1R + mAmbPk2R + awR * 0.1848) * 0.12) * 0.90);
+                    }
+                    else if (ambType == AMBIENT_RAIN)
+                    {
+                        // Soft filtered stereo rainfall + gentle stochastic droplet shimmer
+                        mAmbPk0L = 0.992 * mAmbPk0L + awL * 0.068;
+                        mAmbPk0R = 0.992 * mAmbPk0R + awR * 0.068;
+                        mAmbRainLpL += mRainLpAlpha * ((mAmbPk0L + awL * 0.085) - mAmbRainLpL);
+                        mAmbRainLpR += mRainLpAlpha * ((mAmbPk0R + awR * 0.085) - mAmbRainLpR);
+                        mAmbRainHpL += mRainHpAlpha * (mAmbRainLpL - mAmbRainHpL);
+                        mAmbRainHpR += mRainHpAlpha * (mAmbRainLpR - mAmbRainHpR);
+                        double triggerL = NextAmbientWhiteNoise();
+                        double triggerR = NextAmbientWhiteNoise();
+                        mAmbRainDropL = 0.985 * mAmbRainDropL + (triggerL > 0.994 ? 0.12 : 0.0);
+                        mAmbRainDropR = 0.985 * mAmbRainDropR + (triggerR > 0.994 ? 0.12 : 0.0);
+                        ambL = Math.Tanh((mAmbRainLpL - mAmbRainHpL * 0.35 + awL * mAmbRainDropL) * 1.10);
+                        ambR = Math.Tanh((mAmbRainLpR - mAmbRainHpR * 0.35 + awR * mAmbRainDropR) * 1.10);
+                    }
+                    sampleL = sampleL * (1.0 - 0.35 * mAmbMixSmooth) + ambL * (0.45 * mAmbMixSmooth);
+                    sampleR = sampleR * (1.0 - 0.35 * mAmbMixSmooth) + ambR * (0.45 * mAmbMixSmooth);
+                }
+
+                // Sample-by-sample preset-switch AND profile-switch de-clicker
+                if (p.Id != mLastPresetId || profile != mLastProfile)
                 {
                     if (mLastPresetId != -1)
                     {
@@ -587,6 +772,7 @@ namespace VortaAegisPC
                         mDeclickR = mPrevRawR - sampleR;
                     }
                     mLastPresetId = p.Id;
+                    mLastProfile = profile;
                 }
                 if (Math.Abs(mDeclickL) > 1e-6 || Math.Abs(mDeclickR) > 1e-6)
                 {
@@ -597,9 +783,6 @@ namespace VortaAegisPC
                 }
                 mPrevRawL = sampleL;
                 mPrevRawR = sampleR;
-
-                sampleL *= amGain;
-                sampleR *= amGain;
 
                 if (mFadeInGain < 1.0)
                 {
@@ -615,13 +798,13 @@ namespace VortaAegisPC
                 double envGain = mFadeInGain;
                 if (mFadeOut)
                 {
-                    mFadeOutGain -= mFadeOutStep;
+                    mFadeOutGain -= mActiveFadeOutStep;
                     if (mFadeOutGain <= 0.0)
                     {
                         mFadeOutGain = 0.0;
                         mActive = false;
                     }
-                    envGain *= mFadeOutGain;
+                    envGain *= (mGentleFadeOut ? (mFadeOutGain * mFadeOutGain) : mFadeOutGain);
                 }
                 else if (mFadeOutGain < 1.0)
                 {
@@ -701,6 +884,7 @@ namespace VortaAegisPC
                         Array.Clear(outInterleaved, (i + 1) * 2, rem);
                     }
                     mFadeOut = false;
+                    mGentleFadeOut = false;
                     mCurrentPreset = null;
                     mLastPresetId = -1;
                     mPrevRawL = 0.0;
@@ -709,6 +893,7 @@ namespace VortaAegisPC
                     mDeclickR = 0.0;
                     mLiveFreqHz = 0.0f;
                     mLiveFreqRHz = 0.0f;
+                    mLiveBeatHz = 0.0f;
                     mSweepProgress = 0.0f;
                     mUltrasonicGuarded = false;
                     mLimGain = 1.0;

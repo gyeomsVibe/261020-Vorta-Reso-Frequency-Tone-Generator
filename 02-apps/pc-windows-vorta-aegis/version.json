@@ -1,10 +1,10 @@
 {
   "product": "Vorta Aegis Pro PC",
-  "version": "3.2.0",
-  "releaseDate": "2026-11-23",
+  "version": "3.4.0",
+  "releaseDate": "2026-11-27",
   "minPackSchemaVersion": 1,
-  "bundledPackCount": 1,
-  "totalDefaultPresets": 64,
+  "bundledPackCount": 2,
+  "totalDefaultPresets": 88,
   "downloadUrl": "https://github.com/gyeomsVibe/261020-Vorta-Reso-Frequency-Tone-Generator",
-  "notes": "v3.2 PC: 저주파 스코프(1500Hz 데시메이션+히스테리시스 트리거), 좌우 GridSplitter, 세션 모니터/빠른 전환 독, PC Pro 상용 팩(16종), 미니바 전체 복원 수정, SemVer 2.0 대용량 비교, 정보·업데이트·라이선스 허브"
+  "notes": "v3.4 PC: 코어 48 + PC Pro 16 + 여정 시나리오 24(총 88종), 8탭 1~4단계 여정 순서 및 4대 원탭 자동 코스, 스테레오 앰비언트 블렌더(브라운/핑크/빗소리 0~60%), 바이노럴 진행 램프, 쉬운 한국어 카드 [설명]·[쉬운 가이드] 용어집, 프리셋별 볼륨 기억·20초 부드러운 페이드아웃"
 }

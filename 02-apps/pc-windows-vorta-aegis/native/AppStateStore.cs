@@ -28,6 +28,11 @@ namespace VortaAegisPC
         public double ConsolePaneWidth = double.NaN;
         public string PackFilterId = "";
         public bool ScopeShowComposite = false;
+        public int AmbientType = AegisDspEngine.AMBIENT_OFF;
+        public int AmbientMixPercent = 25;
+        public bool RememberPerPresetVolume = true;
+        public bool GentleSleepFade = true;
+        public Dictionary<string, int> PerPresetVolumes = new Dictionary<string, int>();
         public List<int> FavoriteIds = new List<int>();
         public List<int> RecentPresetIds = new List<int>();
     }
@@ -143,6 +148,26 @@ namespace VortaAegisPC
                 }
             }
             data.RecentPresetIds = cleanRecent;
+
+            if (data.AmbientType < AegisDspEngine.AMBIENT_OFF) data.AmbientType = AegisDspEngine.AMBIENT_OFF;
+            else if (data.AmbientType > AegisDspEngine.AMBIENT_RAIN) data.AmbientType = AegisDspEngine.AMBIENT_RAIN;
+            if (data.AmbientMixPercent < 0) data.AmbientMixPercent = 0;
+            else if (data.AmbientMixPercent > AegisDspEngine.AMBIENT_MAX_MIX) data.AmbientMixPercent = AegisDspEngine.AMBIENT_MAX_MIX;
+
+            Dictionary<string, int> cleanPerVol = new Dictionary<string, int>();
+            if (data.PerPresetVolumes != null)
+            {
+                foreach (KeyValuePair<string, int> kv in data.PerPresetVolumes)
+                {
+                    int pid;
+                    if (int.TryParse(kv.Key, out pid) && pid >= 1 && pid <= 99999)
+                    {
+                        cleanPerVol[pid.ToString(System.Globalization.CultureInfo.InvariantCulture)] = VolumeCurve.ClampPercent(kv.Value);
+                        if (cleanPerVol.Count >= 200) break;
+                    }
+                }
+            }
+            data.PerPresetVolumes = cleanPerVol;
         }
 
         private static double EncodePos(double v)
@@ -179,6 +204,11 @@ namespace VortaAegisPC
                     dto.ConsolePaneWidth = EncodePos(data.ConsolePaneWidth);
                     dto.PackFilterId = data.PackFilterId;
                     dto.ScopeShowComposite = data.ScopeShowComposite;
+                    dto.AmbientType = data.AmbientType;
+                    dto.AmbientMixPercent = data.AmbientMixPercent;
+                    dto.RememberPerPresetVolume = data.RememberPerPresetVolume;
+                    dto.GentleSleepFade = data.GentleSleepFade;
+                    dto.PerPresetVolumes = new Dictionary<string, int>(data.PerPresetVolumes);
                     dto.FavoriteIds = new List<int>(data.FavoriteIds);
                     dto.RecentPresetIds = new List<int>(data.RecentPresetIds);
 
