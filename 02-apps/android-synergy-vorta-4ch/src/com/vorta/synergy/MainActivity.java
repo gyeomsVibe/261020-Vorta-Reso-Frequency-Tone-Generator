@@ -38,11 +38,11 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Vorta Synergy v1.0.0 Commercial Acoustic Console:
- * - Side-by-side commercial app with 4-channel band guardrails (CH1~CH4)
- * - 3 Main Tabs: [자동 시너지 (20x4)] | [반수동 (긴급+체인)] | [기초 (22)]
- * - In-app bottom banner (replaces system popup alerts), zero inline EditText ScrollView bounce,
- *   universal read-only live volume badge (AUX/SPK x/15), and dp-based non-clipping typography.
+ * Vorta Synergy v2.0.0 Commercial Acoustic Console:
+ * - Unrestricted 0.5~200.0 Hz pure-wave control across all 4 hardware roles (CH1~CH4)
+ * - 3 Main Tabs: [자동 시너지 (20x4)] | [반수동 (자유입력+체인)] | [기초 (22)]
+ * - Direct card solo playback from idle state, zero popup blocks in Basic tab,
+ *   full-power -1.0 dBTP default output, and dp-scaled non-clipping typography.
  */
 public class MainActivity extends Activity {
     private static final int BG_ROOT = Color.parseColor("#0B0F14");
@@ -251,11 +251,11 @@ public class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(0, 0, 0, dp(8));
+        bar.setPadding(0, 0, 0, dp(6));
 
         mBtnChannelMenu = new Button(this);
         mBtnChannelMenu.setAllCaps(false);
-        setDpTextSize(mBtnChannelMenu, 12.5f);
+        setDpTextSize(mBtnChannelMenu, 13.5f);
         mBtnChannelMenu.setTypeface(Typeface.DEFAULT_BOLD);
         mBtnChannelMenu.setTextColor(TXT_PRIMARY);
         mBtnChannelMenu.setSingleLine(true);
@@ -263,9 +263,9 @@ public class MainActivity extends Activity {
         mBtnChannelMenu.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         mBtnChannelMenu.setMinWidth(0);
         mBtnChannelMenu.setMinimumWidth(0);
-        mBtnChannelMenu.setPadding(dp(10), dp(6), dp(10), dp(6));
+        mBtnChannelMenu.setPadding(dp(8), dp(4), dp(8), dp(4));
         mBtnChannelMenu.setBackground(makeBox(BG_SURFACE, ACCENT_TEAL, 8, 1));
-        mBtnChannelMenu.setLayoutParams(new LinearLayout.LayoutParams(0, dp(40), 1.0f));
+        mBtnChannelMenu.setLayoutParams(new LinearLayout.LayoutParams(0, dp(38), 1.0f));
         mBtnChannelMenu.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -277,14 +277,14 @@ public class MainActivity extends Activity {
         mTvTopVolumeBadge = new TextView(this);
         mTvTopVolumeBadge.setText(SynergyVolumeGuard.formatLiveVolumeBadge(this));
         mTvTopVolumeBadge.setTextColor(ACCENT_AMBER);
-        setDpTextSize(mTvTopVolumeBadge, 11.0f);
+        setDpTextSize(mTvTopVolumeBadge, 11.5f);
         mTvTopVolumeBadge.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         mTvTopVolumeBadge.setSingleLine(true);
         mTvTopVolumeBadge.setGravity(Gravity.CENTER);
-        mTvTopVolumeBadge.setPadding(dp(9), dp(6), dp(9), dp(6));
+        mTvTopVolumeBadge.setPadding(dp(8), dp(4), dp(8), dp(4));
         mTvTopVolumeBadge.setBackground(makeBox(BG_SURFACE, BORDER_LINE, 8, 1));
         LinearLayout.LayoutParams vLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38));
         vLp.leftMargin = dp(6);
         mTvTopVolumeBadge.setLayoutParams(vLp);
         mTvTopVolumeBadge.setOnClickListener(new View.OnClickListener() {
@@ -357,7 +357,7 @@ public class MainActivity extends Activity {
 
     private void updateChannelDrawerUI() {
         String arrow = mChannelDrawerOpen ? "▲" : "▼";
-        mBtnChannelMenu.setText("≡ " + mActiveChannel.displayName + " (" + mActiveChannel.bandLabel + ") " + arrow);
+        mBtnChannelMenu.setText("≡ " + mActiveChannel.displayName + " " + arrow);
         SynergyChannel[] chs = SynergyChannel.values();
         for (int i = 0; i < chs.length; i++) {
             boolean sel = (chs[i] == mActiveChannel);
@@ -375,10 +375,10 @@ public class MainActivity extends Activity {
     private void buildTelemetryConsole(LinearLayout root) {
         mTelemetryPanel = new LinearLayout(this);
         mTelemetryPanel.setOrientation(LinearLayout.VERTICAL);
-        mTelemetryPanel.setPadding(dp(12), dp(10), dp(12), dp(10));
+        mTelemetryPanel.setPadding(dp(10), dp(8), dp(10), dp(8));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(10);
+        lp.bottomMargin = dp(8);
         mTelemetryPanel.setLayoutParams(lp);
         mTelemetryPanel.setBackground(makeBox(BG_SURFACE, BORDER_LINE, 10, 1));
 
@@ -397,7 +397,7 @@ public class MainActivity extends Activity {
         mTvTeleState = new TextView(this);
         mTvTeleState.setText("대기 중");
         mTvTeleState.setTextColor(TXT_SEC);
-        setDpTextSize(mTvTeleState, 11.5f);
+        setDpTextSize(mTvTeleState, 13.5f);
         mTvTeleState.setTypeface(Typeface.DEFAULT_BOLD);
         mTvTeleState.setSingleLine(true);
         mTvTeleState.setEllipsize(TextUtils.TruncateAt.END);
@@ -407,7 +407,7 @@ public class MainActivity extends Activity {
         mTvTeleTag = new TextView(this);
         mTvTeleTag.setText(mActiveChannel.shortLabel + " · 대기");
         mTvTeleTag.setTextColor(ACCENT_TEAL);
-        setDpTextSize(mTvTeleTag, 10.5f);
+        setDpTextSize(mTvTeleTag, 11.5f);
         mTvTeleTag.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         mTvTeleTag.setSingleLine(true);
         row1.addView(mTvTeleTag);
@@ -417,12 +417,12 @@ public class MainActivity extends Activity {
         LinearLayout row2 = new LinearLayout(this);
         row2.setOrientation(LinearLayout.HORIZONTAL);
         row2.setGravity(Gravity.CENTER_VERTICAL);
-        row2.setPadding(0, dp(4), 0, dp(4));
+        row2.setPadding(0, dp(3), 0, dp(3));
 
         mTvTeleHz = new TextView(this);
         mTvTeleHz.setText("0.00 Hz");
         mTvTeleHz.setTextColor(TXT_DIM);
-        setDpTextSize(mTvTeleHz, 22.0f);
+        setDpTextSize(mTvTeleHz, 25.0f);
         mTvTeleHz.setSingleLine(true);
         mTvTeleHz.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         LinearLayout.LayoutParams hzLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
@@ -430,8 +430,9 @@ public class MainActivity extends Activity {
         mTvTeleHz.setLayoutParams(hzLp);
         row2.addView(mTvTeleHz);
 
-        mBtnMasterStop = makeCompactButton("전체 정지", ACCENT_RED, 34);
-        mBtnMasterStop.setLayoutParams(new LinearLayout.LayoutParams(dp(80), dp(34)));
+        mBtnMasterStop = makeCompactButton("전체 정지", ACCENT_RED, 36);
+        setDpTextSize(mBtnMasterStop, 13.0f);
+        mBtnMasterStop.setLayoutParams(new LinearLayout.LayoutParams(dp(84), dp(36)));
         mBtnMasterStop.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -447,47 +448,49 @@ public class MainActivity extends Activity {
         // Row 3: Live Oscilloscope
         mScopeView = new LiveWaveformView(this);
         LinearLayout.LayoutParams scopeLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(50));
-        scopeLp.topMargin = dp(3);
-        scopeLp.bottomMargin = dp(6);
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(34));
+        scopeLp.topMargin = dp(2);
+        scopeLp.bottomMargin = dp(4);
         mScopeView.setLayoutParams(scopeLp);
         mTelemetryPanel.addView(mScopeView);
 
         // Row 4: 3-Chip Progress Strip (No horizontal text collision)
         LinearLayout chipRow = new LinearLayout(this);
         chipRow.setOrientation(LinearLayout.HORIZONTAL);
-        mTvChipProgress = makeInfoChip("대기 48k");
-        mTvChipMod = makeInfoChip("변조: 순수 정현파");
-        mTvChipOutput = makeInfoChip("연속 출력");
-        LinearLayout.LayoutParams c1Lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f);
+        mTvChipProgress = makeInfoChip("48k 대기");
+        mTvChipMod = makeInfoChip("순수 정현파");
+        mTvChipOutput = makeInfoChip("연속 풀파워");
+        LinearLayout.LayoutParams c1Lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.95f);
         c1Lp.rightMargin = dp(4);
         mTvChipProgress.setLayoutParams(c1Lp);
-        LinearLayout.LayoutParams c2Lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.3f);
+        LinearLayout.LayoutParams c2Lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.10f);
         c2Lp.rightMargin = dp(4);
         mTvChipMod.setLayoutParams(c2Lp);
-        mTvChipOutput.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f));
+        mTvChipOutput.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.95f));
         chipRow.addView(mTvChipProgress);
         chipRow.addView(mTvChipMod);
         chipRow.addView(mTvChipOutput);
         mTelemetryPanel.addView(chipRow);
 
-        // Row 5 & 6: Active Scenario Title + Clean 2-line Role/Effect Description
+        // Row 5 & 6: Active Scenario Title + Clean 1-line Role/Effect Description (hidden while idle)
         mTvTeleTitle = new TextView(this);
-        mTvTeleTitle.setText("시너지 조합 또는 반수동 설정을 선택하세요");
+        mTvTeleTitle.setText("");
         mTvTeleTitle.setTextColor(TXT_PRIMARY);
-        setDpTextSize(mTvTeleTitle, 12.5f);
+        setDpTextSize(mTvTeleTitle, 13.5f);
         mTvTeleTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        mTvTeleTitle.setMaxLines(2);
-        configureBalancedWrap(mTvTeleTitle);
-        mTvTeleTitle.setPadding(0, dp(6), 0, dp(2));
+        mTvTeleTitle.setMaxLines(1);
+        mTvTeleTitle.setEllipsize(TextUtils.TruncateAt.END);
+        mTvTeleTitle.setPadding(0, dp(4), 0, dp(1));
+        mTvTeleTitle.setVisibility(View.GONE);
         mTelemetryPanel.addView(mTvTeleTitle);
 
         mTvTeleSub = new TextView(this);
-        mTvTeleSub.setText(mActiveChannel.roleSubtitle);
+        mTvTeleSub.setText("");
         mTvTeleSub.setTextColor(TXT_SEC);
-        setDpTextSize(mTvTeleSub, 11.0f);
-        mTvTeleSub.setMaxLines(2);
-        configureBalancedWrap(mTvTeleSub);
+        setDpTextSize(mTvTeleSub, 12.0f);
+        mTvTeleSub.setMaxLines(1);
+        mTvTeleSub.setEllipsize(TextUtils.TruncateAt.END);
+        mTvTeleSub.setVisibility(View.GONE);
         mTelemetryPanel.addView(mTvTeleSub);
 
         // Row 7: Utility Actions (24h RTC Schedule / Keep Screen On / Diagnostics)
@@ -495,7 +498,7 @@ public class MainActivity extends Activity {
         utilRow.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams utilLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        utilLp.topMargin = dp(8);
+        utilLp.topMargin = dp(6);
         utilRow.setLayoutParams(utilLp);
 
         mBtnAuto24h = makeCompactButton("24h 자동", BG_CARD, 34);
@@ -603,11 +606,11 @@ public class MainActivity extends Activity {
             setTextIfChanged(mTvTeleTag, mActiveChannel.shortLabel + " · 대기");
             setTextIfChanged(mTvTeleHz, "0.00 Hz");
             setTextColorIfChanged(mTvTeleHz, TXT_DIM);
-            setTextIfChanged(mTvChipProgress, "48k Float 대기");
-            setTextIfChanged(mTvChipMod, "변조: " + SynergyAudioService.formatActiveModulationText());
-            setTextIfChanged(mTvChipOutput, mActiveChannel.recommendVolumeLimitHalf ? "노브 12시 이하" : "대기 상태");
-            setTextIfChanged(mTvTeleTitle, "자동 시너지 또는 반수동 모드를 선택하세요");
-            setTextIfChanged(mTvTeleSub, mActiveChannel.roleSubtitle);
+            setTextIfChanged(mTvChipProgress, "48k 대기");
+            setTextIfChanged(mTvChipMod, SynergyAudioService.formatActiveModulationText());
+            setTextIfChanged(mTvChipOutput, mActiveChannel.recommendVolumeLimitHalf ? "노브 12시" : "대기 상태");
+            if (mTvTeleTitle != null && mTvTeleTitle.getVisibility() != View.GONE) mTvTeleTitle.setVisibility(View.GONE);
+            if (mTvTeleSub != null && mTvTeleSub.getVisibility() != View.GONE) mTvTeleSub.setVisibility(View.GONE);
             borderCol = BORDER_LINE;
         } else if (auxMuted) {
             ledCol = ACCENT_AMBER;
@@ -636,8 +639,8 @@ public class MainActivity extends Activity {
             String qStr = SynergyAudioService.sLiveThdPercent >= 0.0
                     ? String.format(Locale.US, "THD %.2f%%", SynergyAudioService.sLiveThdPercent)
                     : String.format(Locale.US, "%.1fdBFS", SynergyAudioService.sLiveRmsDbfs);
-            setTextIfChanged(mTvChipProgress, (SynergyAudioService.sIsFloatPipeline ? "Float " : "PCM16 ") + qStr);
-            setTextIfChanged(mTvChipMod, "변조: " + SynergyAudioService.formatActiveModulationText());
+            setTextIfChanged(mTvChipProgress, qStr);
+            setTextIfChanged(mTvChipMod, SynergyAudioService.formatActiveModulationText());
             String dutyStr = SynergyAudioService.formatDutyStatusText();
             if (SynergyAudioService.sBatteryOverheatThrottle) {
                 dutyStr = "온도주의 -3dB";
@@ -647,6 +650,9 @@ public class MainActivity extends Activity {
                 dutyStr += String.format(Locale.US, " %.0fdB", SynergyAudioService.sGlobalTrimDb);
             }
             setTextIfChanged(mTvChipOutput, dutyStr);
+
+            if (mTvTeleTitle != null && mTvTeleTitle.getVisibility() != View.VISIBLE) mTvTeleTitle.setVisibility(View.VISIBLE);
+            if (mTvTeleSub != null && mTvTeleSub.getVisibility() != View.VISIBLE) mTvTeleSub.setVisibility(View.VISIBLE);
 
             if (SynergyAudioService.sPlayMode == SynergyAudioService.MODE_AUTO_SYNERGY && SynergyAudioService.sActivePackage != null) {
                 SynergyCatalog.SynergyPackage p = SynergyAudioService.sActivePackage;
@@ -666,7 +672,7 @@ public class MainActivity extends Activity {
             } else {
                 setTextIfChanged(mTvTeleTag, mActiveChannel.shortLabel + " · 체인");
                 setTextIfChanged(mTvTeleTitle, "반수동 다중 체인 실행 중");
-                setTextIfChanged(mTvTeleSub, "활성 스텝 혼합 출력 (" + mActiveChannel.bandLabel + ")");
+                setTextIfChanged(mTvTeleSub, "활성 스텝 자유 혼합 출력");
             }
             borderCol = ACCENT_GREEN;
         }
@@ -700,6 +706,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < 3; i++) {
             final int idx = i;
             Button b = makeCompactButton(labels[i], BG_SURFACE, 38);
+            setDpTextSize(b, 13.5f);
             LinearLayout.LayoutParams bLp = new LinearLayout.LayoutParams(0, dp(38), 1.0f);
             if (i < 2) bLp.rightMargin = dp(6);
             b.setLayoutParams(bLp);
@@ -764,6 +771,7 @@ public class MainActivity extends Activity {
             final SynergyCatalog.FilterGroup fg = groups[i];
             boolean sel = (fg == mFilterGroup);
             Button chip = makeCompactButton(fg.label, sel ? ACCENT_BLUE : BG_SURFACE, 34);
+            setDpTextSize(chip, 12.0f);
             chip.setTextColor(sel ? BG_ROOT : TXT_SEC);
             if (!sel) chip.setBackground(makeBox(BG_SURFACE, BORDER_LINE, 8, 1));
             LinearLayout.LayoutParams cLp = new LinearLayout.LayoutParams(0, dp(34), 1.0f);
@@ -822,10 +830,10 @@ public class MainActivity extends Activity {
 
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setPadding(dp(11), dp(9), dp(11), dp(9));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(8);
+        lp.bottomMargin = dp(7);
         card.setLayoutParams(lp);
         card.setBackground(makeBox(BG_CARD, isPlayingThis ? ACCENT_GREEN : BORDER_LINE, 10, isPlayingThis ? 2 : 1));
 
@@ -836,7 +844,7 @@ public class MainActivity extends Activity {
         TextView tvTitle = new TextView(this);
         tvTitle.setText(pkg.code + " · " + pkg.title);
         tvTitle.setTextColor(isPlayingThis ? ACCENT_GREEN : TXT_PRIMARY);
-        setDpTextSize(tvTitle, 13.0f);
+        setDpTextSize(tvTitle, 14.5f);
         tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
         tvTitle.setMaxLines(2);
         configureBalancedWrap(tvTitle);
@@ -846,7 +854,7 @@ public class MainActivity extends Activity {
         TextView tvBadge = new TextView(this);
         tvBadge.setText(prog.formatDutyBadge());
         tvBadge.setTextColor(prog.dutyCoolMin > 0 ? ACCENT_AMBER : ACCENT_TEAL);
-        setDpTextSize(tvBadge, 10.0f);
+        setDpTextSize(tvBadge, 11.5f);
         tvBadge.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         tvBadge.setSingleLine(true);
         tvBadge.setPadding(dp(7), dp(3), dp(7), dp(3));
@@ -857,17 +865,17 @@ public class MainActivity extends Activity {
         TextView tvMyRole = new TextView(this);
         tvMyRole.setText(mActiveChannel.shortLabel + ": " + prog.step.formatCompactSpec());
         tvMyRole.setTextColor(ACCENT_TEAL);
-        setDpTextSize(tvMyRole, 11.5f);
+        setDpTextSize(tvMyRole, 13.0f);
         tvMyRole.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         tvMyRole.setMaxLines(2);
         configureBalancedWrap(tvMyRole);
-        tvMyRole.setPadding(0, dp(5), 0, dp(2));
+        tvMyRole.setPadding(0, dp(4), 0, dp(2));
         card.addView(tvMyRole);
 
         TextView tvSummary = new TextView(this);
         tvSummary.setText(pkg.summary + " · " + prog.shortRoleNote);
         tvSummary.setTextColor(TXT_SEC);
-        setDpTextSize(tvSummary, 11.0f);
+        setDpTextSize(tvSummary, 12.5f);
         tvSummary.setMaxLines(2);
         configureBalancedWrap(tvSummary);
         card.addView(tvSummary);
@@ -894,56 +902,97 @@ public class MainActivity extends Activity {
     // -------------------------------------------------------------------------
 
     private void renderSemiManualTab(LinearLayout host) {
-        addSectionHeader(host, "긴급 1탭 변조 · 즉시 전환");
-        LinearLayout emRow = new LinearLayout(this);
-        emRow.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams eLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        eLp.bottomMargin = dp(10);
-        emRow.setLayoutParams(eLp);
+        addSectionHeader(host, "자유 주파수 즉시 출력 · 1탭 전환");
+        Button btnFreeFreq = makeCompactButton("자유 주파수 직접 입력 · 재생", BG_CARD, 40);
+        setDpTextSize(btnFreeFreq, 13.5f);
+        btnFreeFreq.setTextColor(ACCENT_TEAL);
+        btnFreeFreq.setBackground(makeBox(BG_CARD, ACCENT_TEAL, 8, 1));
+        LinearLayout.LayoutParams ffLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40));
+        ffLp.bottomMargin = dp(6);
+        btnFreeFreq.setLayoutParams(ffLp);
+        btnFreeFreq.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showFreeFreqDialog();
+            }
+        });
+        host.addView(btnFreeFreq);
 
-        Button btnBeat4 = makeCompactButton("+4Hz 맥놀이", BG_CARD, 36);
-        Button btnDwell = makeCompactButton("스텝 체류", BG_CARD, 36);
-        Button btnShift = makeCompactButton("주파수 시프트", BG_CARD, 36);
-        Button btnCoolTrim = makeCompactButton("저발열 -3dB", BG_CARD, 36);
+        Button btnBeat4 = makeCompactButton("+4Hz 맥놀이", BG_CARD, 38);
+        Button btnSweep = makeCompactButton("대역 스윕", BG_CARD, 38);
+        Button btnShift = makeCompactButton("주파수 시프트", BG_CARD, 38);
+        Button btnCoolTrim = makeCompactButton("트림 -3dB", BG_CARD, 38);
 
-        Button[] emBtns = {btnBeat4, btnDwell, btnShift, btnCoolTrim};
+        Button[] emBtns = {btnBeat4, btnSweep, btnShift, btnCoolTrim};
         for (int i = 0; i < emBtns.length; i++) {
+            setDpTextSize(emBtns[i], 13.0f);
             emBtns[i].setTextColor(ACCENT_TEAL);
             emBtns[i].setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
-            LinearLayout.LayoutParams bLp = new LinearLayout.LayoutParams(0, dp(36), 1.0f);
-            if (i < emBtns.length - 1) bLp.rightMargin = dp(4);
-            emBtns[i].setLayoutParams(bLp);
-            emRow.addView(emBtns[i]);
         }
-        host.addView(emRow);
+
+        LinearLayout emRow1 = new LinearLayout(this);
+        emRow1.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams e1Lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        e1Lp.bottomMargin = dp(6);
+        emRow1.setLayoutParams(e1Lp);
+        LinearLayout.LayoutParams b1L = new LinearLayout.LayoutParams(0, dp(38), 1.0f);
+        b1L.rightMargin = dp(6);
+        btnBeat4.setLayoutParams(b1L);
+        btnSweep.setLayoutParams(new LinearLayout.LayoutParams(0, dp(38), 1.0f));
+        emRow1.addView(btnBeat4);
+        emRow1.addView(btnSweep);
+        host.addView(emRow1);
+
+        LinearLayout emRow2 = new LinearLayout(this);
+        emRow2.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams e2Lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        e2Lp.bottomMargin = dp(8);
+        emRow2.setLayoutParams(e2Lp);
+        LinearLayout.LayoutParams b2L = new LinearLayout.LayoutParams(0, dp(38), 1.0f);
+        b2L.rightMargin = dp(6);
+        btnShift.setLayoutParams(b2L);
+        btnCoolTrim.setLayoutParams(new LinearLayout.LayoutParams(0, dp(38), 1.0f));
+        emRow2.addView(btnShift);
+        emRow2.addView(btnCoolTrim);
+        host.addView(emRow2);
 
         btnBeat4.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                float f1 = mActiveChannel.clampHz((mActiveChannel.sweetMinHz + mActiveChannel.sweetMaxHz) * 0.5f);
-                float f2 = mActiveChannel.clampHz(f1 + 4.0f);
-                if (Math.abs(f2 - f1) < 3.0f) f2 = mActiveChannel.clampHz(f1 - 4.0f);
+                float base = SynergyAudioService.sInstantDisplayHz > 0.5f
+                        ? SynergyAudioService.sInstantDisplayHz
+                        : (mActiveChannel.sweetMinHz + mActiveChannel.sweetMaxHz) * 0.5f;
+                float f1 = SynergyDspCore.clampGlobalHz(base);
+                float f2 = SynergyDspCore.clampGlobalHz(f1 + 4.0f);
+                if (Math.abs(f2 - f1) < 3.0f) f2 = SynergyDspCore.clampGlobalHz(f1 - 4.0f);
                 ScenarioStep quick = new ScenarioStep(
-                        901, "긴급 +4Hz 제어 맥놀이", ScenarioStep.StepType.SINGLE,
+                        901, "즉시 +4Hz 순수 맥놀이", ScenarioStep.StepType.SINGLE,
                         f1, f1, f2, 300.0f, 2, false, 0f, 0f, false, 0f, 0f, false, 0f, 0f, true, false, 0f);
                 SynergyAudioService.playQuickManual(MainActivity.this, quick);
+                renderActiveTab();
                 refreshLiveTelemetry();
-                showBanner(String.format(Locale.US, "긴급 4Hz 맥놀이: %.1f + %.1f Hz", f1, f2), true);
+                showBanner(String.format(Locale.US, "+4Hz 맥놀이 재생: %.1f + %.1f Hz", f1, f2), true);
             }
         });
 
-        btnDwell.setOnClickListener(new View.OnClickListener() {
+        btnSweep.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 ScenarioStep quick = new ScenarioStep(
-                        902, "긴급 4단 스텝 체류", ScenarioStep.StepType.STEPPED_DWELL,
-                        mActiveChannel.sweetMinHz, mActiveChannel.sweetMaxHz, 0f, 240.0f, 4,
-                        true, ModulationProfile.LOCKED_FM_DEPTH, ModulationProfile.LOCKED_FM_RATE_HZ,
-                        false, 0f, 0f, false, 0f, 0f, true, true, 0f);
+                        902, "자유 순수 대역 스윕", ScenarioStep.StepType.SWEEP,
+                        mActiveChannel.sweetMinHz, mActiveChannel.sweetMaxHz, 0f, 240.0f, 2,
+                        SynergyAudioService.sGlobalFmOn, ModulationProfile.LOCKED_FM_DEPTH, ModulationProfile.LOCKED_FM_RATE_HZ,
+                        SynergyAudioService.sGlobalAmOn, ModulationProfile.LOCKED_AM_DEPTH, ModulationProfile.LOCKED_AM_RATE_HZ,
+                        SynergyAudioService.sGlobalRmOn, ModulationProfile.LOCKED_RM_DEPTH, ModulationProfile.LOCKED_RM_RATE_HZ,
+                        true, SynergyAudioService.sGlobalJitter, 0f);
                 SynergyAudioService.playQuickManual(MainActivity.this, quick);
+                renderActiveTab();
                 refreshLiveTelemetry();
-                showBanner("긴급 4단 스텝 체류 시작 (" + mActiveChannel.bandLabel + ")", true);
+                showBanner(String.format(Locale.US, "순수 대역 스윕 시작 (%.1f~%.1f Hz)",
+                        mActiveChannel.sweetMinHz, mActiveChannel.sweetMaxHz), true);
             }
         });
 
@@ -953,18 +1002,19 @@ public class MainActivity extends Activity {
                 float cur = SynergyAudioService.sInstantDisplayHz > 0f
                         ? SynergyAudioService.sInstantDisplayHz
                         : mActiveChannel.sweetMinHz;
-                float shifted = mActiveChannel.clampHz(cur + 3.5f);
-                if (Math.abs(shifted - cur) < 1.0f) shifted = mActiveChannel.clampHz(cur - 3.5f);
+                float shifted = SynergyDspCore.clampGlobalHz(cur + 3.5f);
+                if (Math.abs(shifted - cur) < 1.0f) shifted = SynergyDspCore.clampGlobalHz(cur - 3.5f);
                 ScenarioStep quick = new ScenarioStep(
-                        903, "긴급 주파수 시프트", ScenarioStep.StepType.SINGLE,
+                        903, "자유 주파수 시프트", ScenarioStep.StepType.SINGLE,
                         shifted, shifted, 0f, 300.0f, 2,
                         SynergyAudioService.sGlobalFmOn, ModulationProfile.LOCKED_FM_DEPTH, ModulationProfile.LOCKED_FM_RATE_HZ,
                         SynergyAudioService.sGlobalAmOn, ModulationProfile.LOCKED_AM_DEPTH, ModulationProfile.LOCKED_AM_RATE_HZ,
                         SynergyAudioService.sGlobalRmOn, ModulationProfile.LOCKED_RM_DEPTH, ModulationProfile.LOCKED_RM_RATE_HZ,
-                        true, true, 0f);
+                        true, SynergyAudioService.sGlobalJitter, 0f);
                 SynergyAudioService.playQuickManual(MainActivity.this, quick);
+                renderActiveTab();
                 refreshLiveTelemetry();
-                showBanner(String.format(Locale.US, "내성 회피 시프트 -> %.1f Hz", shifted), true);
+                showBanner(String.format(Locale.US, "주파수 시프트 -> %.1f Hz", shifted), true);
             }
         });
 
@@ -976,12 +1026,12 @@ public class MainActivity extends Activity {
                 SynergyStore.saveTrimDb(MainActivity.this, nextTrim);
                 renderActiveTab();
                 refreshLiveTelemetry();
-                showBanner(nextTrim < 0f ? "저발열 디지털 트림 -3 dB 적용" : "디지털 트림 0 dB 복원", true);
+                showBanner(nextTrim < 0f ? "디지털 트림 -3 dB 적용" : "디지털 트림 0 dB 풀출력 복원", true);
             }
         });
 
         // Quick channel recommended presets
-        addSectionHeader(host, "채널 대역 빠른 주파수 (" + mActiveChannel.bandLabel + ")");
+        addSectionHeader(host, "채널 추천 빠른 주파수 (" + mActiveChannel.bandLabel + " · 참고용)");
         LinearLayout qRow = new LinearLayout(this);
         qRow.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams qLp = new LinearLayout.LayoutParams(
@@ -992,6 +1042,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < qPresets.length; i++) {
             final float hz = qPresets[i];
             Button qb = makeCompactButton(String.format(Locale.US, "%.1fHz", hz), BG_CARD, 36);
+            setDpTextSize(qb, 12.0f);
             qb.setTextColor(TXT_PRIMARY);
             qb.setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
             LinearLayout.LayoutParams ql = new LinearLayout.LayoutParams(0, dp(36), 1.0f);
@@ -1008,6 +1059,7 @@ public class MainActivity extends Activity {
                             SynergyAudioService.sGlobalRmOn, ModulationProfile.LOCKED_RM_DEPTH, ModulationProfile.LOCKED_RM_RATE_HZ,
                             true, SynergyAudioService.sGlobalJitter, 0f);
                     SynergyAudioService.playQuickManual(MainActivity.this, quick);
+                    renderActiveTab();
                     refreshLiveTelemetry();
                     showBanner(String.format(Locale.US, "%.1f Hz 즉시 재생", hz), true);
                 }
@@ -1017,7 +1069,7 @@ public class MainActivity extends Activity {
         host.addView(qRow);
 
         // Chain actions: Add / Play All / Save Set / Load Set / Fleet JSON
-        addSectionHeader(host, "사용자 혼합 체인 (단일 · 스윕 · 스텝 · 휴지)");
+        addSectionHeader(host, "내 시나리오 체인 (단일 · 스윕 · 0.5~200 Hz 자유)");
         LinearLayout act1 = new LinearLayout(this);
         act1.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams a1Lp = new LinearLayout.LayoutParams(
@@ -1153,10 +1205,10 @@ public class MainActivity extends Activity {
                 && SynergyAudioService.sQuickManualStep == null;
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setPadding(dp(11), dp(9), dp(11), dp(9));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(8);
+        lp.bottomMargin = dp(7);
         card.setLayoutParams(lp);
         card.setBackground(makeBox(BG_CARD, playing ? ACCENT_GREEN : BORDER_LINE, 10, playing ? 2 : 1));
 
@@ -1167,7 +1219,7 @@ public class MainActivity extends Activity {
         TextView tvTitle = new TextView(this);
         tvTitle.setText(step.title + " [" + step.type.label + "]");
         tvTitle.setTextColor(playing ? ACCENT_GREEN : TXT_PRIMARY);
-        setDpTextSize(tvTitle, 12.5f);
+        setDpTextSize(tvTitle, 14.0f);
         tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
         tvTitle.setMaxLines(2);
         configureBalancedWrap(tvTitle);
@@ -1179,39 +1231,37 @@ public class MainActivity extends Activity {
         TextView tvSpec = new TextView(this);
         tvSpec.setText(step.formatCompactSpec());
         tvSpec.setTextColor(ACCENT_AMBER);
-        setDpTextSize(tvSpec, 11.0f);
+        setDpTextSize(tvSpec, 12.5f);
         tvSpec.setTypeface(Typeface.MONOSPACE);
         tvSpec.setMaxLines(2);
         configureBalancedWrap(tvSpec);
-        tvSpec.setPadding(0, dp(4), 0, dp(8));
+        tvSpec.setPadding(0, dp(3), 0, dp(7));
         card.addView(tvSpec);
 
         LinearLayout ctrl = new LinearLayout(this);
         ctrl.setOrientation(LinearLayout.HORIZONTAL);
 
         Button btnPlay = makeCompactButton(playing ? "정지" : "재생",
-                playing ? ACCENT_GREEN : Color.parseColor("#D97706"), 34);
-        btnPlay.setLayoutParams(new LinearLayout.LayoutParams(0, dp(34), 1.0f));
+                playing ? ACCENT_GREEN : Color.parseColor("#D97706"), 38);
+        setDpTextSize(btnPlay, 13.0f);
+        btnPlay.setLayoutParams(new LinearLayout.LayoutParams(0, dp(38), 1.0f));
         btnPlay.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                boolean nowOn = SynergyAudioService.toggleManualStepPlayback(MainActivity.this, step, !playing);
                 synchronized (SynergyAudioService.sLock) {
-                    step.isPlaying = !playing;
                     SynergyStore.saveStepsNow(MainActivity.this, SynergyAudioService.sManualSteps);
-                }
-                if (SynergyAudioService.isAnySourceActive()) {
-                    SynergyAudioService.playManualChain(MainActivity.this);
-                } else {
-                    SynergyAudioService.stopAllPlayback();
                 }
                 renderActiveTab();
                 refreshLiveTelemetry();
+                showBanner(nowOn ? (step.title + " 단독 재생 시작") : (step.title + " 정지됨"), true);
             }
         });
         ctrl.addView(btnPlay);
 
-        Button btnEdit = makeCompactButton("편집", Color.parseColor("#0284C7"), 34);
-        LinearLayout.LayoutParams eLp = new LinearLayout.LayoutParams(0, dp(34), 0.7f);
+        Button btnEdit = makeCompactButton("편집", Color.parseColor("#0284C7"), 38);
+        setDpTextSize(btnEdit, 13.0f);
+        LinearLayout.LayoutParams eLp = new LinearLayout.LayoutParams(0, dp(38), 0.7f);
         eLp.leftMargin = dp(5);
         btnEdit.setLayoutParams(eLp);
         btnEdit.setOnClickListener(new View.OnClickListener() {
@@ -1222,10 +1272,11 @@ public class MainActivity extends Activity {
         });
         ctrl.addView(btnEdit);
 
-        Button btnDel = makeCompactButton("삭제", BG_SURFACE, 34);
+        Button btnDel = makeCompactButton("삭제", BG_SURFACE, 38);
+        setDpTextSize(btnDel, 13.0f);
         btnDel.setTextColor(TXT_SEC);
         btnDel.setBackground(makeBox(BG_SURFACE, BORDER_LINE, 6, 1));
-        LinearLayout.LayoutParams dLp = new LinearLayout.LayoutParams(0, dp(34), 0.6f);
+        LinearLayout.LayoutParams dLp = new LinearLayout.LayoutParams(0, dp(38), 0.6f);
         dLp.leftMargin = dp(5);
         btnDel.setLayoutParams(dLp);
         btnDel.setOnClickListener(new View.OnClickListener() {
@@ -1256,11 +1307,13 @@ public class MainActivity extends Activity {
         LinearLayout modRow = new LinearLayout(this);
         modRow.setOrientation(LinearLayout.HORIZONTAL);
         boolean[] flags = {SynergyAudioService.sGlobalFmOn, SynergyAudioService.sGlobalAmOn, SynergyAudioService.sGlobalRmOn};
-        String[] mLabels = {"FM 3.5%", "AM 15%", "RM 25%", "변조 OFF"};
+        String[] mLabels = {"FM 3.5%", "AM 15%", "RM 25%", "순수 파동"};
+        boolean pureWaveOn = !flags[0] && !flags[1] && !flags[2];
         for (int i = 0; i < 4; i++) {
             final int idx = i;
-            boolean on = (i < 3) && flags[i];
+            boolean on = (i < 3) ? flags[i] : pureWaveOn;
             Button mb = makeCompactButton(mLabels[i], on ? ACCENT_TEAL : BG_CARD, 36);
+            setDpTextSize(mb, 11.5f);
             mb.setTextColor(on ? BG_ROOT : TXT_PRIMARY);
             if (!on) mb.setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
             LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(0, dp(36), 1.0f);
@@ -1298,10 +1351,11 @@ public class MainActivity extends Activity {
         govRow.setLayoutParams(gLp);
 
         Button btnJitter = makeCompactButton(SynergyAudioService.sGlobalJitter ? "내성 지터 ON" : "내성 지터 OFF",
-                SynergyAudioService.sGlobalJitter ? ACCENT_BLUE : BG_CARD, 36);
+                SynergyAudioService.sGlobalJitter ? ACCENT_BLUE : BG_CARD, 38);
+        setDpTextSize(btnJitter, 13.0f);
         btnJitter.setTextColor(SynergyAudioService.sGlobalJitter ? BG_ROOT : TXT_SEC);
         if (!SynergyAudioService.sGlobalJitter) btnJitter.setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
-        LinearLayout.LayoutParams jLp = new LinearLayout.LayoutParams(0, dp(36), 1.0f);
+        LinearLayout.LayoutParams jLp = new LinearLayout.LayoutParams(0, dp(38), 1.0f);
         jLp.rightMargin = dp(5);
         btnJitter.setLayoutParams(jLp);
         btnJitter.setOnClickListener(new View.OnClickListener() {
@@ -1314,12 +1368,13 @@ public class MainActivity extends Activity {
         });
         govRow.addView(btnJitter);
 
-        String[] dutyLabels = {"듀티: 역할기본", "듀티: 연속", "듀티: 20/10분", "듀티: 15/15분"};
+        String[] dutyLabels = {"듀티: 역할기본", "연속 풀파워", "듀티: 20/10분", "듀티: 15/15분"};
         int dm = Math.max(0, Math.min(3, SynergyAudioService.sDutyMode));
-        Button btnDuty = makeCompactButton(dutyLabels[dm], BG_CARD, 36);
+        Button btnDuty = makeCompactButton(dutyLabels[dm], BG_CARD, 38);
+        setDpTextSize(btnDuty, 13.0f);
         btnDuty.setTextColor(ACCENT_AMBER);
         btnDuty.setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
-        btnDuty.setLayoutParams(new LinearLayout.LayoutParams(0, dp(36), 1.0f));
+        btnDuty.setLayoutParams(new LinearLayout.LayoutParams(0, dp(38), 1.0f));
         btnDuty.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1346,6 +1401,7 @@ public class MainActivity extends Activity {
             boolean sel = Math.abs(SynergyAudioService.sGlobalTrimDb - tv) < 0.2f;
             Button tb = makeCompactButton(tv == 0f ? "트림 0dB" : String.format(Locale.US, "%.0fdB", tv),
                     sel ? ACCENT_TEAL : BG_CARD, 34);
+            setDpTextSize(tb, 11.5f);
             tb.setTextColor(sel ? BG_ROOT : TXT_SEC);
             if (!sel) tb.setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
             LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(0, dp(34), 1.0f);
@@ -1373,11 +1429,12 @@ public class MainActivity extends Activity {
         stabRow.setLayoutParams(stLp);
 
         boolean stabOn = SynergyAudioService.sStabilizerEnabled;
-        Button btnStab = makeCompactButton(stabOn ? "하드웨어 보호 ON" : "하드웨어 보호 OFF",
-                stabOn ? ACCENT_GREEN : BG_CARD, 36);
+        Button btnStab = makeCompactButton(stabOn ? "보호필터 ON" : "보호필터 OFF",
+                stabOn ? ACCENT_GREEN : BG_CARD, 38);
+        setDpTextSize(btnStab, 13.0f);
         btnStab.setTextColor(stabOn ? BG_ROOT : TXT_SEC);
         if (!stabOn) btnStab.setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
-        LinearLayout.LayoutParams sbLp = new LinearLayout.LayoutParams(0, dp(36), 1.0f);
+        LinearLayout.LayoutParams sbLp = new LinearLayout.LayoutParams(0, dp(38), 1.0f);
         sbLp.rightMargin = dp(5);
         btnStab.setLayoutParams(sbLp);
         btnStab.setOnClickListener(new View.OnClickListener() {
@@ -1398,10 +1455,11 @@ public class MainActivity extends Activity {
                 ? String.format(Locale.US, "잡음 회피 %.1fHz", SynergyAudioService.sNotchCenterHz)
                 : "잡음 대역 회피";
         Button btnNotch = makeCompactButton(notchTxt,
-                SynergyAudioService.sNotchCenterHz > 0.0f ? ACCENT_AMBER : BG_CARD, 36);
+                SynergyAudioService.sNotchCenterHz > 0.0f ? ACCENT_AMBER : BG_CARD, 38);
+        setDpTextSize(btnNotch, 13.0f);
         btnNotch.setTextColor(SynergyAudioService.sNotchCenterHz > 0.0f ? BG_ROOT : TXT_PRIMARY);
         if (SynergyAudioService.sNotchCenterHz <= 0.0f) btnNotch.setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
-        btnNotch.setLayoutParams(new LinearLayout.LayoutParams(0, dp(36), 1.0f));
+        btnNotch.setLayoutParams(new LinearLayout.LayoutParams(0, dp(38), 1.0f));
         btnNotch.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1415,15 +1473,15 @@ public class MainActivity extends Activity {
     }
 
     // -------------------------------------------------------------------------
-    // TAB 3: 기초 (22 Concise Entries with Channel Band Guardrail)
+    // TAB 3: 기초 (22 Unrestricted Direct-Play Entries)
     // -------------------------------------------------------------------------
 
     private void renderBasicTab(LinearLayout host) {
         TextView info = new TextView(this);
-        info.setText("기초 대역 스윕(10) · 단독 공진(12) — 현재 채널(" + mActiveChannel.bandLabel + ") 범위 자동 보호");
+        info.setText("기초 대역 스윕(10) · 단독 공진(12) — 전 대역 제한 없이 1탭 즉시 재생");
         info.setTextColor(TXT_SEC);
-        setDpTextSize(info, 11.0f);
-        info.setPadding(dp(2), 0, dp(2), dp(8));
+        setDpTextSize(info, 12.0f);
+        info.setPadding(dp(2), 0, dp(2), dp(6));
         host.addView(info);
 
         List<SynergyCatalog.BasicEntry> list = SynergyCatalog.basicCatalog();
@@ -1437,7 +1495,7 @@ public class MainActivity extends Activity {
 
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setPadding(dp(12), dp(10), dp(12), dp(10));
+            card.setPadding(dp(11), dp(9), dp(11), dp(9));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             lp.bottomMargin = dp(7);
@@ -1451,7 +1509,7 @@ public class MainActivity extends Activity {
             TextView tvTitle = new TextView(this);
             tvTitle.setText(entry.title);
             tvTitle.setTextColor(isPlaying ? ACCENT_GREEN : TXT_PRIMARY);
-            setDpTextSize(tvTitle, 12.5f);
+            setDpTextSize(tvTitle, 14.0f);
             tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
             tvTitle.setMaxLines(2);
             configureBalancedWrap(tvTitle);
@@ -1460,8 +1518,8 @@ public class MainActivity extends Activity {
 
             TextView tvRec = new TextView(this);
             tvRec.setText("권장 " + entry.recommendedChannel.shortLabel);
-            tvRec.setTextColor(inBand ? ACCENT_TEAL : ACCENT_AMBER);
-            setDpTextSize(tvRec, 10.0f);
+            tvRec.setTextColor(inBand ? ACCENT_TEAL : TXT_SEC);
+            setDpTextSize(tvRec, 11.5f);
             tvRec.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
             tvRec.setSingleLine(true);
             tvRec.setPadding(dp(6), dp(2), dp(6), dp(2));
@@ -1472,7 +1530,7 @@ public class MainActivity extends Activity {
             TextView tvDesc = new TextView(this);
             tvDesc.setText(entry.effectDesc);
             tvDesc.setTextColor(TXT_SEC);
-            setDpTextSize(tvDesc, 11.0f);
+            setDpTextSize(tvDesc, 12.5f);
             tvDesc.setMaxLines(2);
             configureBalancedWrap(tvDesc);
             tvDesc.setPadding(0, dp(3), 0, 0);
@@ -1487,14 +1545,10 @@ public class MainActivity extends Activity {
                         refreshLiveTelemetry();
                         return;
                     }
-                    if (!inBand) {
-                        showBasicGuardDialog(entry);
-                        return;
-                    }
                     SynergyAudioService.playBasicEntry(MainActivity.this, entry);
                     renderActiveTab();
                     refreshLiveTelemetry();
-                    showBanner(entry.title + " 재생 시작", true);
+                    showBanner(entry.title + " 제한 없이 즉시 재생", true);
                 }
             });
             host.addView(card);
@@ -1505,40 +1559,16 @@ public class MainActivity extends Activity {
     // DIALOGS (SynergyDialogTheme + SOFT_INPUT_ADJUST_RESIZE — In-app banner!)
     // -------------------------------------------------------------------------
 
-    private void showBasicGuardDialog(final SynergyCatalog.BasicEntry entry) {
-        float cMin = mActiveChannel.clampHz(entry.step.minHz);
-        float cMax = mActiveChannel.clampHz(entry.step.maxHz);
-        String msg = String.format(Locale.US,
-                "선택한 항목은 %s(%s) 권장 대역입니다.\n현재 채널(%s · %s) 범위로 안전 클램프(%.1f~%.1f Hz)하여 재생할까요?",
-                entry.recommendedChannel.displayName, entry.recommendedChannel.bandLabel,
-                mActiveChannel.displayName, mActiveChannel.bandLabel, cMin, cMax);
-        AlertDialog dlg = new AlertDialog.Builder(this, R.style.SynergyDialogTheme)
-                .setTitle("채널 대역 보호 안내")
-                .setMessage(msg)
-                .setPositiveButton("보정 재생", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        SynergyAudioService.playBasicEntry(MainActivity.this, entry);
-                        renderActiveTab();
-                        refreshLiveTelemetry();
-                        showBanner("채널 대역 안전 보정 재생 시작", true);
-                    }
-                })
-                .setNegativeButton("취소", null)
-                .create();
-        dlg.show();
-    }
-
     private void showStepEditorDialog(final ScenarioStep existing) {
         ScrollView sv = new ScrollView(this);
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(16), dp(12), dp(16), dp(8));
 
-        final EditText etTitle = makeDialogInput(body, "스텝 이름", existing != null ? existing.title : "사용자 스텝", InputType.TYPE_CLASS_TEXT);
-        final ScenarioStep.StepType[] types = ScenarioStep.StepType.values();
-        final int[] typeIdx = {existing != null ? existing.type.ordinal() : 1};
-        final Button btnType = makeCompactButton("모드: " + types[typeIdx[0]].label, BG_CARD, 36);
+        final EditText etTitle = makeDialogInput(body, "스텝 이름", existing != null ? existing.title : "자유 스텝", InputType.TYPE_CLASS_TEXT);
+        final ScenarioStep.StepType[] types = {ScenarioStep.StepType.SINGLE, ScenarioStep.StepType.SWEEP};
+        final int[] typeIdx = {existing != null && existing.type == ScenarioStep.StepType.SWEEP ? 1 : 0};
+        final Button btnType = makeCompactButton("모드: " + types[typeIdx[0]].label, BG_CARD, 38);
         btnType.setTextColor(ACCENT_TEAL);
         btnType.setBackground(makeBox(BG_CARD, BORDER_LINE, 8, 1));
         LinearLayout.LayoutParams btLp = new LinearLayout.LayoutParams(
@@ -1554,43 +1584,36 @@ public class MainActivity extends Activity {
         });
         body.addView(btnType);
 
-        final EditText etMin = makeDialogInput(body, "시작/단일 Hz (" + mActiveChannel.bandLabel + ")",
+        final EditText etMin = makeDialogInput(body, "시작/단일 Hz (자유 0.5~200)",
                 String.format(Locale.US, "%.1f", existing != null ? existing.minHz : mActiveChannel.sweetMinHz),
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        final EditText etMax = makeDialogInput(body, "종료 Hz (스윕/스텝용)",
+        final EditText etMax = makeDialogInput(body, "종료 Hz (스윕 시 0.5~200)",
                 String.format(Locale.US, "%.1f", existing != null ? existing.maxHz : mActiveChannel.sweetMaxHz),
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         final EditText etSec = makeDialogInput(body, "주기/시간(초)",
                 String.format(Locale.US, "%.0f", existing != null ? existing.durationSec : 300f),
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        final EditText etSteps = makeDialogInput(body, "스텝 단계 수 (2~12)",
-                String.valueOf(existing != null ? existing.stepCount : 4),
-                InputType.TYPE_CLASS_NUMBER);
-        final EditText etDual = makeDialogInput(body, "이중음 보조 Hz (0=사용안함)",
+        final EditText etDual = makeDialogInput(body, "이중음 보조 Hz (0=단일 순수 파동)",
                 String.format(Locale.US, "%.1f", existing != null ? existing.secondaryHz : 0f),
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         sv.addView(body);
 
         AlertDialog dlg = new AlertDialog.Builder(this, R.style.SynergyDialogTheme)
-                .setTitle(existing != null ? "스텝 편집" : "새 스텝 추가")
+                .setTitle(existing != null ? "자유 스텝 편집" : "새 자유 스텝 추가")
                 .setView(sv)
                 .setPositiveButton("저장", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
                         String title = etTitle.getText().toString().trim();
-                        if (title.isEmpty()) title = "사용자 스텝";
+                        if (title.isEmpty()) title = "자유 스텝";
                         float rawMin = parseFloatSafe(etMin.getText().toString(), mActiveChannel.sweetMinHz);
-                        float rawMax = parseFloatSafe(etMax.getText().toString(), mActiveChannel.sweetMaxHz);
+                        float rawMax = parseFloatSafe(etMax.getText().toString(), rawMin);
                         float dur = Math.max(5.0f, parseFloatSafe(etSec.getText().toString(), 300.0f));
-                        int stepN = Math.max(2, Math.min(12, (int) parseFloatSafe(etSteps.getText().toString(), 4f)));
                         float rawDual = parseFloatSafe(etDual.getText().toString(), 0f);
 
-                        float cMin = mActiveChannel.clampHz(rawMin);
-                        float cMax = mActiveChannel.clampHz(rawMax);
-                        float cDual = rawDual > 0f ? mActiveChannel.clampHz(rawDual) : 0f;
-                        boolean clamped = (Math.abs(cMin - rawMin) > 0.05f)
-                                || (Math.abs(cMax - rawMax) > 0.05f)
-                                || (rawDual > 0f && Math.abs(cDual - rawDual) > 0.05f);
+                        float cMin = SynergyDspCore.clampGlobalHz(rawMin);
+                        float cMax = SynergyDspCore.clampGlobalHz(rawMax);
+                        float cDual = rawDual > 0f ? SynergyDspCore.clampGlobalHz(rawDual) : 0f;
 
                         boolean savedOk;
                         synchronized (SynergyAudioService.sLock) {
@@ -1600,12 +1623,12 @@ public class MainActivity extends Activity {
                                 existing.minHz = cMin;
                                 existing.maxHz = cMax;
                                 existing.durationSec = dur;
-                                existing.stepCount = stepN;
+                                existing.stepCount = 2;
                                 existing.secondaryHz = cDual;
                             } else {
                                 SynergyAudioService.sManualSteps.add(new ScenarioStep(
                                         mNextStepId++, title, types[typeIdx[0]],
-                                        cMin, cMax, cDual, dur, stepN,
+                                        cMin, cMax, cDual, dur, 2,
                                         false, 0f, 0f, false, 0f, 0f, false, 0f, 0f,
                                         true, SynergyAudioService.sGlobalJitter, 0f));
                             }
@@ -1614,15 +1637,89 @@ public class MainActivity extends Activity {
                         renderActiveTab();
                         if (!savedOk) {
                             showBanner("저장 실패: 기기 저장소 쓰기 오류", false);
-                        } else if (clamped) {
-                            showBanner("채널 보호(" + mActiveChannel.bandLabel + ") 범위로 보정 저장됨", true);
                         } else {
-                            showBanner("스텝 저장 완료: " + title, true);
+                            showBanner(String.format(Locale.US, "스텝 저장 완료: %s (%.1f Hz)", title, cMin), true);
                         }
                     }
                 })
                 .setNegativeButton("취소", null)
                 .create();
+        if (dlg.getWindow() != null) {
+            dlg.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        }
+        dlg.show();
+    }
+
+    private void showFreeFreqDialog() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(16), dp(12), dp(16), dp(6));
+
+        float cur = SynergyAudioService.sInstantDisplayHz >= 0.5f
+                ? SynergyAudioService.sInstantDisplayHz
+                : mActiveChannel.sweetMinHz;
+        final EditText etHz = makeDialogInput(body, "출력 주파수 Hz (자유 0.5 ~ 200.0)",
+                String.format(Locale.US, "%.1f", cur),
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        final EditText etDual = makeDialogInput(body, "보조 이중음 Hz (0 = 단일 순수 파동)",
+                "0.0",
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+
+        Button btnDualPlay = makeCompactButton("+4Hz 이중음 재생", BG_CARD, 38);
+        setDpTextSize(btnDualPlay, 13.0f);
+        btnDualPlay.setTextColor(ACCENT_TEAL);
+        btnDualPlay.setBackground(makeBox(BG_CARD, ACCENT_TEAL, 8, 1));
+        LinearLayout.LayoutParams dlLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(38));
+        dlLp.topMargin = dp(4);
+        btnDualPlay.setLayoutParams(dlLp);
+        body.addView(btnDualPlay);
+        sv.addView(body);
+
+        final AlertDialog dlg = new AlertDialog.Builder(this, R.style.SynergyDialogTheme)
+                .setTitle("자유 주파수 즉시 재생")
+                .setView(sv)
+                .setPositiveButton("단일 즉시 재생", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        float f1 = SynergyDspCore.clampGlobalHz(parseFloatSafe(etHz.getText().toString(), mActiveChannel.sweetMinHz));
+                        float rawDual = parseFloatSafe(etDual.getText().toString(), 0f);
+                        float f2 = rawDual > 0f ? SynergyDspCore.clampGlobalHz(rawDual) : 0f;
+                        ScenarioStep quick = new ScenarioStep(
+                                905, String.format(Locale.US, "자유 %.1f Hz", f1), ScenarioStep.StepType.SINGLE,
+                                f1, f1, f2, 300.0f, 2,
+                                SynergyAudioService.sGlobalFmOn, ModulationProfile.LOCKED_FM_DEPTH, ModulationProfile.LOCKED_FM_RATE_HZ,
+                                SynergyAudioService.sGlobalAmOn, ModulationProfile.LOCKED_AM_DEPTH, ModulationProfile.LOCKED_AM_RATE_HZ,
+                                SynergyAudioService.sGlobalRmOn, ModulationProfile.LOCKED_RM_DEPTH, ModulationProfile.LOCKED_RM_RATE_HZ,
+                                true, SynergyAudioService.sGlobalJitter, 0f);
+                        SynergyAudioService.playQuickManual(MainActivity.this, quick);
+                        renderActiveTab();
+                        refreshLiveTelemetry();
+                        showBanner(String.format(Locale.US, "자유 주파수 재생 시작: %.1f Hz", f1), true);
+                    }
+                })
+                .setNegativeButton("취소", null)
+                .create();
+        btnDualPlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                float f1 = SynergyDspCore.clampGlobalHz(parseFloatSafe(etHz.getText().toString(), mActiveChannel.sweetMinHz));
+                float f2 = SynergyDspCore.clampGlobalHz(f1 + 4.0f);
+                ScenarioStep quick = new ScenarioStep(
+                        906, String.format(Locale.US, "자유 %.1f+%.1f Hz", f1, f2), ScenarioStep.StepType.SINGLE,
+                        f1, f1, f2, 300.0f, 2,
+                        SynergyAudioService.sGlobalFmOn, ModulationProfile.LOCKED_FM_DEPTH, ModulationProfile.LOCKED_FM_RATE_HZ,
+                        SynergyAudioService.sGlobalAmOn, ModulationProfile.LOCKED_AM_DEPTH, ModulationProfile.LOCKED_AM_RATE_HZ,
+                        SynergyAudioService.sGlobalRmOn, ModulationProfile.LOCKED_RM_DEPTH, ModulationProfile.LOCKED_RM_RATE_HZ,
+                        true, SynergyAudioService.sGlobalJitter, 0f);
+                SynergyAudioService.playQuickManual(MainActivity.this, quick);
+                dlg.dismiss();
+                renderActiveTab();
+                refreshLiveTelemetry();
+                showBanner(String.format(Locale.US, "자유 +4Hz 이중음: %.1f + %.1f Hz", f1, f2), true);
+            }
+        });
         if (dlg.getWindow() != null) {
             dlg.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         }
@@ -1798,7 +1895,7 @@ public class MainActivity extends Activity {
         guide.setPadding(0, 0, 0, dp(8));
         box.addView(guide);
 
-        final EditText etCenter = makeDialogInput(box, "회피 중심 Hz (" + mActiveChannel.bandLabel + ")",
+        final EditText etCenter = makeDialogInput(box, "회피 중심 Hz (자유 0.5~200)",
                 SynergyAudioService.sNotchCenterHz > 0f ? String.format(Locale.US, "%.1f", SynergyAudioService.sNotchCenterHz) : "0",
                 InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         final EditText etWidth = makeDialogInput(box, "감쇄 폭 ±Hz (기본 1.5)",
@@ -1813,7 +1910,7 @@ public class MainActivity extends Activity {
                     public void onClick(DialogInterface dialog, int which) {
                         float rawC = parseFloatSafe(etCenter.getText().toString(), 0.0f);
                         float rawW = Math.max(0.5f, Math.min(5.0f, parseFloatSafe(etWidth.getText().toString(), 1.5f)));
-                        float c = rawC > 0.0f ? mActiveChannel.clampHz(rawC) : 0.0f;
+                        float c = rawC > 0.0f ? SynergyDspCore.clampGlobalHz(rawC) : 0.0f;
                         SynergyAudioService.sNotchCenterHz = c;
                         SynergyAudioService.sNotchHalfWidthHz = rawW;
                         boolean ok = SynergyStore.saveNotchFilter(MainActivity.this, mActiveChannel, c, rawW);
@@ -1898,9 +1995,9 @@ public class MainActivity extends Activity {
         TextView tv = new TextView(this);
         tv.setText(title);
         tv.setTextColor(TXT_SEC);
-        setDpTextSize(tv, 11.5f);
+        setDpTextSize(tv, 13.0f);
         tv.setTypeface(Typeface.DEFAULT_BOLD);
-        tv.setPadding(dp(2), dp(2), dp(2), dp(6));
+        tv.setPadding(dp(2), dp(2), dp(2), dp(4));
         parent.addView(tv);
     }
 
@@ -1908,12 +2005,12 @@ public class MainActivity extends Activity {
         TextView tv = new TextView(this);
         tv.setText(text);
         tv.setTextColor(TXT_SEC);
-        setDpTextSize(tv, 10.0f);
+        setDpTextSize(tv, 11.0f);
         tv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         tv.setSingleLine(true);
         tv.setEllipsize(TextUtils.TruncateAt.END);
         tv.setGravity(Gravity.CENTER);
-        tv.setPadding(dp(5), dp(4), dp(5), dp(4));
+        tv.setPadding(dp(3), dp(4), dp(3), dp(4));
         tv.setBackground(makeBox(BG_INPUT, BORDER_LINE, 6, 1));
         return tv;
     }
@@ -1923,7 +2020,7 @@ public class MainActivity extends Activity {
         b.setText(text);
         b.setAllCaps(false);
         b.setTextColor(TXT_PRIMARY);
-        setDpTextSize(b, 11.5f);
+        setDpTextSize(b, 12.5f);
         b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setSingleLine(true);
         b.setEllipsize(TextUtils.TruncateAt.END);
@@ -1931,7 +2028,7 @@ public class MainActivity extends Activity {
         b.setMinimumWidth(0);
         b.setMinHeight(dp(heightDp));
         b.setMinimumHeight(dp(heightDp));
-        b.setPadding(dp(6), dp(2), dp(6), dp(2));
+        b.setPadding(dp(5), dp(2), dp(5), dp(2));
         b.setBackground(makeBox(bgColor, bgColor, 8, 0));
         return b;
     }
@@ -1940,7 +2037,7 @@ public class MainActivity extends Activity {
         TextView lbl = new TextView(this);
         lbl.setText(label);
         lbl.setTextColor(TXT_SEC);
-        setDpTextSize(lbl, 11.0f);
+        setDpTextSize(lbl, 12.5f);
         lbl.setPadding(0, dp(4), 0, dp(3));
         parent.addView(lbl);
 
@@ -1948,7 +2045,7 @@ public class MainActivity extends Activity {
         et.setText(initialVal);
         et.setTextColor(TXT_PRIMARY);
         et.setHintTextColor(TXT_DIM);
-        setDpTextSize(et, 13.0f);
+        setDpTextSize(et, 14.5f);
         et.setInputType(inputType);
         et.setPadding(dp(10), dp(8), dp(10), dp(8));
         et.setBackground(makeBox(BG_INPUT, BORDER_LINE, 6, 1));

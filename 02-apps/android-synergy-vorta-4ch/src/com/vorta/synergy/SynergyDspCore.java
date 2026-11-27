@@ -13,7 +13,7 @@ public final class SynergyDspCore {
     public static final double TRUE_PEAK_HEADROOM = 0.8912509381337456; // -1.0 dBTP
     public static final double MAX_AMPLITUDE_16 = 29200.0;
     public static final float MIN_FREQ_HZ = 0.5f;
-    public static final float MAX_FREQ_HZ = 63.0f;
+    public static final float MAX_FREQ_HZ = 200.0f;
     public static final long AUX_DISCONNECT_DEBOUNCE_MS = 250L;
 
     public static final class DspState {
@@ -88,7 +88,8 @@ public final class SynergyDspCore {
         public float globalRmRateHz = 0.0f;
         public boolean useGlobalModulation = false;
         public boolean auxSuspended = false;
-        public boolean stabilizerEnabled = true;
+        public boolean enforceChannelClamp = false;
+        public boolean stabilizerEnabled = false;
         public float notchCenterHz = 0.0f;
         public float notchHalfWidthHz = 1.5f;
         public boolean batteryThermalThrottle = false;
@@ -158,22 +159,37 @@ public final class SynergyDspCore {
         return wrapPhase(theta);
     }
 
+    public static float clampGlobalHz(float hz) {
+        if (Float.isNaN(hz) || Float.isInfinite(hz)) return 40.0f;
+        if (hz < MIN_FREQ_HZ) return MIN_FREQ_HZ;
+        if (hz > MAX_FREQ_HZ) return MAX_FREQ_HZ;
+        return hz;
+    }
+
+    private static double boundHz(double hz, SynergyChannel ch, boolean enforceChannelClamp) {
+        if (enforceChannelClamp && ch != null) {
+            return ch.clampHz((float) hz);
+        }
+        return clampGlobalHz((float) hz);
+    }
+
     private static double dbToLinear(double db) {
         double c = clamp(db, -12.0, 0.0);
         return Math.pow(10.0, c / 20.0);
     }
 
-    private static double computeStepTargetHz(ScenarioStep st, DspState ds, SynergyChannel ch, double invSr) {
+    private static double computeStepTargetHz(
+            ScenarioStep st, DspState ds, SynergyChannel ch, boolean enforceChannelClamp, double invSr) {
         if (st.type == ScenarioStep.StepType.REST_COOL) {
-            return ch.minHz;
+            return ch != null ? ch.minHz : MIN_FREQ_HZ;
         }
         if (st.type == ScenarioStep.StepType.SINGLE) {
             double base = st.minHz + (st.jitterEnabled ? ds.jitterHzOffset : 0.0);
-            return ch.clampHz((float) base);
+            return boundHz(base, ch, enforceChannelClamp);
         }
 
-        double lo = ch.clampHz(Math.min(st.minHz, st.maxHz));
-        double hi = ch.clampHz(Math.max(st.minHz, st.maxHz));
+        double lo = boundHz(Math.min(st.minHz, st.maxHz), ch, enforceChannelClamp);
+        double hi = boundHz(Math.max(st.minHz, st.maxHz), ch, enforceChannelClamp);
         double span = Math.max(0.0, hi - lo);
         double cycleSec = Math.max(1.0, st.durationSec * ds.jitterTimeScale);
         ds.stepProgressSec += invSr;
@@ -193,12 +209,12 @@ public final class SynergyDspCore {
             int idx = (int) Math.floor(u * n);
             if (idx >= n) idx = n - 1;
             double frac = (double) idx / (double) (n - 1);
-            return ch.clampHz((float) (lo + span * frac + (st.jitterEnabled ? ds.jitterHzOffset : 0.0)));
+            return boundHz(lo + span * frac + (st.jitterEnabled ? ds.jitterHzOffset : 0.0), ch, enforceChannelClamp);
         }
 
         // Triangle ping-pong SWEEP
         double tri = (u < 0.5) ? (u * 2.0) : (2.0 - u * 2.0);
-        return ch.clampHz((float) (lo + span * tri + (st.jitterEnabled ? ds.jitterHzOffset : 0.0)));
+        return boundHz(lo + span * tri + (st.jitterEnabled ? ds.jitterHzOffset : 0.0), ch, enforceChannelClamp);
     }
 
     public static float renderChunk(
@@ -209,10 +225,10 @@ public final class SynergyDspCore {
         SynergyChannel ch = (req.channel != null) ? req.channel : SynergyChannel.CH1_SUB_LOW;
         HardwareStabilizer.Profile stabProf = HardwareStabilizer.profileFor(ch);
 
-        double softSec = req.stabilizerEnabled ? stabProf.softStartSec : 1.0;
-        double slewMs = req.stabilizerEnabled ? stabProf.slewMs : 35.0;
-        double fadeInStep = 1.0 / (Math.max(0.5, softSec) * sr);
-        double fadeOutStep = 1.0 / (0.5 * sr);
+        double softSec = req.stabilizerEnabled ? stabProf.softStartSec : 0.25;
+        double slewMs = req.stabilizerEnabled ? stabProf.slewMs : 25.0;
+        double fadeInStep = 1.0 / (Math.max(0.15, softSec) * sr);
+        double fadeOutStep = 1.0 / (0.25 * sr);
         double auxMuteStep = 1.0 / (0.020 * sr);
         double freqSlewAlpha = 1.0 - Math.exp(-1.0 / ((slewMs * 0.001) * sr));
         double dualMixAlpha = 1.0 - Math.exp(-1.0 / (0.040 * sr));
@@ -274,17 +290,17 @@ public final class SynergyDspCore {
                 boolean useJitter = step.jitterEnabled || req.globalJitter;
                 boolean prevJ = step.jitterEnabled;
                 step.jitterEnabled = useJitter;
-                double targetF1 = computeStepTargetHz(step, st, ch, invSr);
+                double targetF1 = computeStepTargetHz(step, st, ch, req.enforceChannelClamp, invSr);
                 step.jitterEnabled = prevJ;
 
                 if (st.smoothedF1 <= 0.0) st.smoothedF1 = targetF1;
                 else st.smoothedF1 += (targetF1 - st.smoothedF1) * freqSlewAlpha;
-                double f1 = ch.clampHz((float) st.smoothedF1);
+                double f1 = boundHz(st.smoothedF1, ch, req.enforceChannelClamp);
                 lastCarrierHz = f1;
                 instantHz = (float) f1;
                 step.currentHz = instantHz;
 
-                double targetF2 = (step.secondaryHz > 0.0f) ? ch.clampHz(step.secondaryHz) : 0.0;
+                double targetF2 = (step.secondaryHz > 0.0f) ? boundHz(step.secondaryHz, ch, req.enforceChannelClamp) : 0.0;
                 double targetDual = (targetF2 > 0.0) ? 1.0 : 0.0;
                 st.dualMix += (targetDual - st.dualMix) * dualMixAlpha;
                 if (targetF2 > 0.0) {
@@ -303,13 +319,13 @@ public final class SynergyDspCore {
                 double rmR = req.useGlobalModulation ? req.globalRmRateHz : step.rmRateHz;
 
                 double fmRatio = (fmOn && fmD > 0.0 && fmR > 0.0) ? (1.0 + fmD * Math.sin(st.fmPhase)) : 1.0;
-                double instF1 = ch.clampHz((float) (f1 * fmRatio));
+                double instF1 = boundHz(f1 * fmRatio, ch, req.enforceChannelClamp);
                 if (fmOn && fmR > 0.0) instantHz = (float) instF1;
                 st.phase1 = wrapPhase(st.phase1 + TWO_PI * instF1 * invSr);
                 double s1 = Math.sin(st.phase1);
                 double mixed = s1;
                 if (st.dualMix > 1e-4 && st.smoothedF2 > 0.0) {
-                    double instF2 = ch.clampHz((float) (st.smoothedF2 * fmRatio));
+                    double instF2 = boundHz(st.smoothedF2 * fmRatio, ch, req.enforceChannelClamp);
                     st.phase2 = wrapPhase(st.phase2 + TWO_PI * instF2 * invSr);
                     double s2 = Math.sin(st.phase2);
                     mixed = (1.0 - 0.5 * st.dualMix) * s1 + (0.5 * st.dualMix) * s2;
@@ -344,10 +360,10 @@ public final class SynergyDspCore {
                     if (!item.isPlaying || item.type == ScenarioStep.StepType.REST_COOL) continue;
                     double fHz;
                     if (item.type == ScenarioStep.StepType.SINGLE) {
-                        fHz = ch.clampHz(item.minHz);
+                        fHz = boundHz(item.minHz, ch, req.enforceChannelClamp);
                     } else {
-                        double lo = ch.clampHz(Math.min(item.minHz, item.maxHz));
-                        double hi = ch.clampHz(Math.max(item.minHz, item.maxHz));
+                        double lo = boundHz(Math.min(item.minHz, item.maxHz), ch, req.enforceChannelClamp);
+                        double hi = boundHz(Math.max(item.minHz, item.maxHz), ch, req.enforceChannelClamp);
                         double dur = Math.max(1.0, item.durationSec);
                         item.progressSec += invSr;
                         if (item.progressSec >= dur) {
@@ -361,21 +377,21 @@ public final class SynergyDspCore {
                         if (item.type == ScenarioStep.StepType.STEPPED_DWELL) {
                             int n = Math.max(2, item.stepCount);
                             int idx = Math.min(n - 1, (int) Math.floor(u * n));
-                            fHz = ch.clampHz((float) (lo + (hi - lo) * ((double) idx / (double) (n - 1))));
+                            fHz = boundHz(lo + (hi - lo) * ((double) idx / (double) (n - 1)), ch, req.enforceChannelClamp);
                         } else {
                             double tri = (u < 0.5) ? (u * 2.0) : (2.0 - u * 2.0);
-                            fHz = ch.clampHz((float) (lo + (hi - lo) * tri));
+                            fHz = boundHz(lo + (hi - lo) * tri, ch, req.enforceChannelClamp);
                         }
                     }
                     item.currentHz = (float) fHz;
                     lastCarrierHz = fHz;
                     if (activeSources == 0) instantHz = (float) fHz;
 
-                    double instF1 = ch.clampHz((float) (fHz * fmRatio));
+                    double instF1 = boundHz(fHz * fmRatio, ch, req.enforceChannelClamp);
                     item.phase1 = wrapPhase(item.phase1 + TWO_PI * instF1 * invSr);
                     double s = Math.sin(item.phase1);
                     if (item.secondaryHz > 0.0f) {
-                        double instF2 = ch.clampHz((float) (ch.clampHz(item.secondaryHz) * fmRatio));
+                        double instF2 = boundHz(boundHz(item.secondaryHz, ch, req.enforceChannelClamp) * fmRatio, ch, req.enforceChannelClamp);
                         item.phase2 = wrapPhase(item.phase2 + TWO_PI * instF2 * invSr);
                         s = 0.5 * (s + Math.sin(item.phase2));
                     }
@@ -407,7 +423,7 @@ public final class SynergyDspCore {
                         * trimLin * st.smoothedStabGain * st.dutyGain;
                 st.prevSampleNorm = st.lastSampleNorm;
                 st.lastSampleNorm = normRaw;
-                st.tailHz = ch.clampHz((float) lastCarrierHz);
+                st.tailHz = (float) boundHz(lastCarrierHz, ch, req.enforceChannelClamp);
                 st.tailLocked = false;
                 if (st.envGain < 1.0) st.envGain = Math.min(1.0, st.envGain + fadeInStep);
                 outNorm = normRaw * st.envGain * TRUE_PEAK_HEADROOM;

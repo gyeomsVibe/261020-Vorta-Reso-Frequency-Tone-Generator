@@ -1,6 +1,7 @@
 import com.vorta.synergy.HardwareStabilizer;
 import com.vorta.synergy.ModulationProfile;
 import com.vorta.synergy.ScenarioStep;
+import com.vorta.synergy.SynergyAudioService;
 import com.vorta.synergy.SynergyCatalog;
 import com.vorta.synergy.SynergyChannel;
 import com.vorta.synergy.SynergyDspCore;
@@ -269,14 +270,27 @@ public class TestVortaSynergyAudit {
         String mainCode = new String(Files.readAllBytes(new File(srcDir, "MainActivity.java").toPath()), StandardCharsets.UTF_8);
         boolean noToast = !mainCode.contains("Toast.makeText");
         boolean noInlineEdit = !mainCode.contains("makeLabeledInput");
+        boolean noBasicGuardPopup = !mainCode.contains("showBasicGuardDialog") && !mainCode.contains("채널 대역 보호 안내");
+        boolean noBloatStepCount = !mainCode.contains("스텝 단계 수");
+        boolean noFourChClutter = !mainCode.contains("formatFourChannelLine");
+        boolean noIdlePromptFiller = !mainCode.contains("선택하세요");
+        boolean usesDpTypography = mainCode.contains("COMPLEX_UNIT_DIP");
+        boolean hasSoloFixAndFreeUi = mainCode.contains("toggleManualStepPlayback") && mainCode.contains("showFreeFreqDialog");
         boolean adjustResizeAll = true;
+        boolean version200All = true;
         for (String fl : new String[]{"s6_api24", "s7_api26", "a30_api30"}) {
             String mf = new String(Files.readAllBytes(new File("vorta_synergy_app/flavors/" + fl + "/AndroidManifest.xml").toPath()), StandardCharsets.UTF_8);
             if (mf.contains("adjustPan") || !mf.contains("adjustResize")) adjustResizeAll = false;
+            if (!mf.contains("versionCode=\"200\"") || !mf.contains("versionName=\"2.0.0\"")) version200All = false;
         }
         check("Gate6_CommercialAndBugRegression",
-                bannedHits.isEmpty() && noToast && noInlineEdit && adjustResizeAll,
-                "banned=" + bannedHits + " noToast=" + noToast + " adjustResizeAll=" + adjustResizeAll);
+                bannedHits.isEmpty() && noToast && noInlineEdit && noBasicGuardPopup
+                        && noBloatStepCount && noFourChClutter && noIdlePromptFiller && usesDpTypography
+                        && hasSoloFixAndFreeUi && adjustResizeAll && version200All,
+                "banned=" + bannedHits + " noToast=" + noToast + " noGuard=" + noBasicGuardPopup
+                        + " noBloat=" + noBloatStepCount + " no4ch=" + noFourChClutter
+                        + " noIdleFiller=" + noIdlePromptFiller + " dpTypo=" + usesDpTypography
+                        + " soloFree=" + hasSoloFixAndFreeUi + " v200=" + version200All);
 
         // ---------------------------------------------------------------------
         // GATE 7: SynergyVolumeGuard Red-Team Logic Verification
@@ -349,6 +363,35 @@ public class TestVortaSynergyAudit {
                         && stabQr.thdPlusNPercent >= 0.0 && stabQr.thdPlusNPercent < 0.01 && stabQr.peak < 0.80,
                 String.format(Locale.US, "ch1=%s ch2=%s ch3Main=%s notch=%s thermalLoad=%.2f derate=%.2fdB cool=%.2f batt=%s hotPureTHD=%.6f%%",
                         ch1RollOk, ch2ProtOk, ch3MainOk, notchOk, load, derateHot, cooledLoad, battHystOk, stabQr.thdPlusNPercent));
+
+        // ---------------------------------------------------------------------
+        // GATE 9: v2.0.0 Unrestricted 0.5~200Hz, Full-Power Default, Non-Monotonous S6
+        // ---------------------------------------------------------------------
+        int s6FlatCount = 0;
+        for (SynergyCatalog.SynergyPackage p : pkgs) {
+            ScenarioStep s2 = p.ch2.step;
+            if (s2.type == ScenarioStep.StepType.SINGLE && s2.secondaryHz <= 0f && !s2.fmOn && !s2.amOn && !s2.rmOn) {
+                s6FlatCount++;
+            }
+        }
+        SynergyDspCore.DspState freeDs = new SynergyDspCore.DspState();
+        SynergyDspCore.RenderRequest freeReq = new SynergyDspCore.RenderRequest();
+        freeReq.channel = SynergyChannel.CH1_SUB_LOW; // 1~21Hz physical role, MUST NOT clamp 55.0Hz
+        freeReq.enforceChannelClamp = false;
+        freeReq.stabilizerEnabled = false;
+        freeReq.singleStep = new ScenarioStep(99, "Unclamped55", ScenarioStep.StepType.SINGLE,
+                55.0f, 55.0f, 0f, 300f, 2, false, 0f, 0f, false, 0f, 0f, false, 0f, 0f, true, false, 0f);
+        for (int k = 0; k < 12; k++) SynergyDspCore.renderChunk(buf, 2880, 48000, freeDs, freeReq);
+        for (int i = 0; i < 2880; i++) mono[i] = buf[i * 2];
+        SynergyDspCore.LiveQualityReport freeQr = SynergyDspCore.measureLiveBufferQuality(mono, 2880, 48000, true, 55.0, 0.0);
+        boolean fullPowerDefaultOk = freeQr.peak >= 0.88 && freeQr.peak <= SynergyDspCore.TRUE_PEAK_HEADROOM + 1e-5
+                && freeQr.thdPlusNPercent >= 0.0 && freeQr.thdPlusNPercent < 0.01;
+        boolean defaultServicePower = SynergyAudioService.sDutyMode == 1 && !SynergyAudioService.sStabilizerEnabled;
+
+        check("Gate9_V2UnrestrictedAndFullPower",
+                s6FlatCount == 0 && fullPowerDefaultOk && defaultServicePower,
+                String.format(Locale.US, "s6Flat=%d free55Peak=%.4f free55THD=%.6f%% svcDefaultPower=%s",
+                        s6FlatCount, freeQr.peak, freeQr.thdPlusNPercent, defaultServicePower));
 
         System.out.println("\nSUMMARY: PASSED=" + sPassed + " FAILED=" + sFailed);
         if (sFailed > 0) System.exit(1);

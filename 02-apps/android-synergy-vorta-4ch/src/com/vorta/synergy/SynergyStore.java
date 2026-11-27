@@ -51,12 +51,13 @@ public final class SynergyStore {
         float lo = c.sweetMinHz;
         float hi = c.sweetMaxHz;
         float mid = Math.round(((lo + hi) * 0.5f) * 10.0f) / 10.0f;
-        out.add(new ScenarioStep(1, "표준 대역 스윕", ScenarioStep.StepType.SWEEP,
-                lo, hi, 0.0f, 313.0f, 2, false, 0f, 0f, false, 0f, 0f, false, 0f, 0f, true, true, 0.0f));
-        out.add(new ScenarioStep(2, "공진 스텝 체류", ScenarioStep.StepType.STEPPED_DWELL,
-                lo, hi, 0.0f, 367.0f, 4, false, 0f, 0f, false, 0f, 0f, false, 0f, 0f, true, false, 0.0f));
-        out.add(new ScenarioStep(3, "단일 중심 앵커", ScenarioStep.StepType.SINGLE,
-                mid, mid, 0.0f, 300.0f, 2, false, 0f, 0f, false, 0f, 0f, false, 0f, 0f, true, false, 0.0f));
+        float beat2 = Math.round((mid + 4.0f) * 10.0f) / 10.0f;
+        out.add(new ScenarioStep(1, "핵심 대역 스윕", ScenarioStep.StepType.SWEEP,
+                lo, hi, 0.0f, 240.0f, 2, false, 0f, 0f, false, 0f, 0f, false, 0f, 0f, true, true, 0.0f));
+        out.add(new ScenarioStep(2, "4Hz 이중 맥놀이", ScenarioStep.StepType.SINGLE,
+                mid, mid, beat2, 300.0f, 2, false, 0f, 0f, false, 0f, 0f, false, 0f, 0f, true, false, 0.0f));
+        out.add(new ScenarioStep(3, "단일 피크 강타", ScenarioStep.StepType.SINGLE,
+                hi, hi, 0.0f, 300.0f, 2, false, 0f, 0f, false, 0f, 0f, false, 0f, 0f, true, false, 0.0f));
     }
 
     public static boolean loadFromState(boolean initialized, String rawJson, SynergyChannel ch, List<ScenarioStep> out) {
@@ -115,7 +116,7 @@ public final class SynergyStore {
     }
 
     public static int loadDutyMode(Context ctx) {
-        return ctx == null ? 0 : getPrefs(ctx).getInt(KEY_DUTY_MODE, 0);
+        return ctx == null ? 1 : getPrefs(ctx).getInt(KEY_DUTY_MODE, 1);
     }
 
     public static void saveDutyMode(Context ctx, int mode) {
@@ -131,7 +132,7 @@ public final class SynergyStore {
     }
 
     public static boolean loadStabilizerEnabled(Context ctx) {
-        return ctx == null || getPrefs(ctx).getBoolean(KEY_STABILIZER_ON, true);
+        return ctx != null && getPrefs(ctx).getBoolean(KEY_STABILIZER_ON, false);
     }
 
     public static boolean saveStabilizerEnabled(Context ctx, boolean on) {

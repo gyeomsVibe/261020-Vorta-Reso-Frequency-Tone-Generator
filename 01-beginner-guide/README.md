@@ -30,7 +30,7 @@
 
 ## 저장소 다른 폴더 바로가기
 
-- **실제 앱 소스코드 모음**: [../02-apps/](../02-apps/README.md) (`Windows PC v3.2.0` + `Android 6종` + `초기 프로토타입 1종`)
+- **실제 앱 소스코드 모음**: [../02-apps/](../02-apps/README.md) (`Windows PC v3.4.0` + `Android v3.4.6` + `4기기 시너지 v2.0.0` + `통합 v5.2.1` + 전용기기/프로토타입)
 - **주파수 운용 시나리오 가이드**: [../03-scenarios/](../03-scenarios/README.md)
 - **설계서·상용화 라이선스·기기 공학 보고서**: [../04-docs/](../04-docs/README.md)
 - **원클릭 설치·점검 스크립트**: [../05-scripts/](../05-scripts/README.md)

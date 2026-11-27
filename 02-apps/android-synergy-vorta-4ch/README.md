@@ -1,4 +1,4 @@
-# 보르타 시너지 v1.1.1 (`com.vorta.synergy`, 4기기 협동 전용)
+# 보르타 시너지 v2.0.0 (`com.vorta.synergy`, `versionCode=200`, 4기기 협동 전용)
 
 4대의 전용 Android 단말(S7 · S6 · 트랜스 A30 · 본카운터 A30)을 서로 위상 상쇄 없이 주파수·시간·열부하 측면에서 통합 운용하도록 설계된 상용 품질 네이티브 앱입니다.
 
@@ -13,6 +13,8 @@
 - **반수동 · 기초 · 하드웨어 안정화 (`HardwareStabilizer.java`)**: 긴급 1탭 변조 4종, `단일/스윕/스텝/휴지` 혼합 체인, `fleet_v1` JSON 백업, `-12 dB` 잡음 회피 노치, 배터리 `43°C` 보호.
 - **실시간 볼륨 배지 & S6/S7 안전볼륨 레드팀 보강 (`SynergyVolumeGuard.java`)**: A30 볼륨 쓰기 `0건` 유지한 채 `SPK · 15/15` / `AUX · 12/15` 실시간 표시, S6/S7 5분 쿨다운·수동 하향 존중·Direct-Binder/접근성 자동 복원.
 
+- **v2.0.0 (`Build 200`) 6대 실사용 리뉴얼**: `S6 (CH 2)` 전 `S-01~S-20` 4Hz 이중음 맥놀이·동적 스윕 재설계, 반수동·기초 `0.5~200.0 Hz` 무제한 자유 주파수, 반수동 `IDLE -> [재생]` 즉시 전환 버그 수정, 다이얼로그 슬림화·`자유 주파수 직접 입력`, 기본 연속 풀파워(`0.89125`, `-1.0 dBTP`) 직결, `320dp` 기준 가독성 재보정.
+
 ## 빌드 & 검증
 
 ```powershell
@@ -20,4 +22,4 @@
 python build_synergy.py
 ```
 
-- 호스트 JVM 8대 게이트 자동 감사 테스트: `tests/TestVortaSynergyAudit.java` (`PASSED=10 FAILED=0`)
+- 호스트 JVM 9대 게이트 자동 감사 테스트: `tests/TestVortaSynergyAudit.java` (`PASSED=11 FAILED=0`)

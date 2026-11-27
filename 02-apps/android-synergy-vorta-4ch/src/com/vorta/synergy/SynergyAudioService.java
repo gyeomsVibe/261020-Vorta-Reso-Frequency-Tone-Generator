@@ -71,9 +71,9 @@ public class SynergyAudioService extends Service {
     public static volatile boolean sGlobalAmOn = false;
     public static volatile boolean sGlobalRmOn = false;
     public static volatile boolean sGlobalJitter = true;
-    public static volatile int sDutyMode = 0; // 0=role default, 1=continuous, 2=20/10, 3=15/15
+    public static volatile int sDutyMode = 1; // 0=role default, 1=continuous full power, 2=20/10, 3=15/15
     public static volatile float sGlobalTrimDb = 0.0f;
-    public static volatile boolean sStabilizerEnabled = true;
+    public static volatile boolean sStabilizerEnabled = false;
     public static volatile float sNotchCenterHz = 0.0f;
     public static volatile float sNotchHalfWidthHz = 1.5f;
 
@@ -156,9 +156,42 @@ public class SynergyAudioService extends Service {
             sActiveBasic = null;
             sQuickManualStep = step;
             sPlayMode = MODE_SEMI_MANUAL;
-            sInstantDisplayHz = sActiveChannel.clampHz(step.minHz);
+            sInstantDisplayHz = SynergyDspCore.clampGlobalHz(step.minHz);
         }
         startServiceCompat(ctx);
+    }
+
+    /** Solo/multi step card toggle: cleanly transitions MODE_IDLE -> MODE_SEMI_MANUAL and vice versa. */
+    public static boolean toggleManualStepPlayback(Context ctx, ScenarioStep targetStep, boolean wantPlay) {
+        boolean anyActive = false;
+        float firstHz = 0.0f;
+        synchronized (sLock) {
+            if (targetStep != null) {
+                targetStep.isPlaying = wantPlay;
+            }
+            sActivePackage = null;
+            sActiveBasic = null;
+            sQuickManualStep = null;
+            for (int i = 0; i < sManualSteps.size(); i++) {
+                ScenarioStep st = sManualSteps.get(i);
+                if (st.isPlaying) {
+                    if (!anyActive) {
+                        firstHz = SynergyDspCore.clampGlobalHz(st.minHz);
+                    }
+                    anyActive = true;
+                }
+            }
+            if (anyActive) {
+                sPlayMode = MODE_SEMI_MANUAL;
+                sInstantDisplayHz = firstHz;
+            }
+        }
+        if (anyActive) {
+            startServiceCompat(ctx);
+            return true;
+        }
+        stopAllPlayback();
+        return false;
     }
 
     public static void playManualChain(Context ctx) {
@@ -180,7 +213,7 @@ public class SynergyAudioService extends Service {
             sQuickManualStep = null;
             sActiveBasic = entry;
             sPlayMode = MODE_BASIC;
-            sInstantDisplayHz = sActiveChannel.clampHz(entry.step.minHz);
+            sInstantDisplayHz = SynergyDspCore.clampGlobalHz(entry.step.minHz);
         }
         startServiceCompat(ctx);
     }
@@ -692,6 +725,7 @@ public class SynergyAudioService extends Service {
                 req.globalJitter = sGlobalJitter;
                 req.globalTrimDb = sGlobalTrimDb;
                 req.auxSuspended = mAuxSuspended;
+                req.enforceChannelClamp = false;
                 req.stabilizerEnabled = sStabilizerEnabled;
                 req.notchCenterHz = sNotchCenterHz;
                 req.notchHalfWidthHz = sNotchHalfWidthHz;
@@ -705,14 +739,20 @@ public class SynergyAudioService extends Service {
                     resolveDutyCycle(prog.dutyOnMin, prog.dutyCoolMin, req);
                     if (prog.step.type == ScenarioStep.StepType.SINGLE && !prog.step.fmOn && !prog.step.amOn && !prog.step.rmOn) {
                         isPureExpected = true;
-                        refF1 = sActiveChannel.clampHz(prog.step.minHz);
-                        refF2 = prog.step.secondaryHz > 0f ? sActiveChannel.clampHz(prog.step.secondaryHz) : 0.0;
+                        refF1 = SynergyDspCore.clampGlobalHz(prog.step.minHz);
+                        refF2 = prog.step.secondaryHz > 0f ? SynergyDspCore.clampGlobalHz(prog.step.secondaryHz) : 0.0;
                     }
                 } else if (sPlayMode == MODE_BASIC && sActiveBasic != null) {
                     req.singleStep = sActiveBasic.step;
                     req.multiSteps = null;
                     req.useGlobalModulation = false;
                     resolveDutyCycle(sActiveChannel.defaultDutyOnMin, sActiveChannel.defaultDutyCoolMin, req);
+                    if (sActiveBasic.step.type == ScenarioStep.StepType.SINGLE
+                            && !sActiveBasic.step.fmOn && !sActiveBasic.step.amOn && !sActiveBasic.step.rmOn) {
+                        isPureExpected = true;
+                        refF1 = SynergyDspCore.clampGlobalHz(sActiveBasic.step.minHz);
+                        refF2 = sActiveBasic.step.secondaryHz > 0f ? SynergyDspCore.clampGlobalHz(sActiveBasic.step.secondaryHz) : 0.0;
+                    }
                 } else if (sPlayMode == MODE_SEMI_MANUAL && sQuickManualStep != null) {
                     req.singleStep = sQuickManualStep;
                     req.multiSteps = null;
@@ -722,8 +762,8 @@ public class SynergyAudioService extends Service {
                             && !sQuickManualStep.fmOn && !sQuickManualStep.amOn && !sQuickManualStep.rmOn
                             && !sGlobalFmOn && !sGlobalAmOn && !sGlobalRmOn) {
                         isPureExpected = true;
-                        refF1 = sActiveChannel.clampHz(sQuickManualStep.minHz);
-                        refF2 = sQuickManualStep.secondaryHz > 0f ? sActiveChannel.clampHz(sQuickManualStep.secondaryHz) : 0.0;
+                        refF1 = SynergyDspCore.clampGlobalHz(sQuickManualStep.minHz);
+                        refF2 = sQuickManualStep.secondaryHz > 0f ? SynergyDspCore.clampGlobalHz(sQuickManualStep.secondaryHz) : 0.0;
                     }
                 } else if (sPlayMode == MODE_SEMI_MANUAL) {
                     req.singleStep = null;
